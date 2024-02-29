@@ -63,13 +63,13 @@ def main(parse_args):
 
 
 def train(model, train_loader, optimizer, loss_fn, epoch, writer, metrics):
-    train_pbar = tqdm(enumerate(train_loader))
+    train_pbar = tqdm(train_loader)
     losses = AverageMeter()
 
     y_pred, y_true = [], []
 
     model.train()
-    for cur_iter, data in train_pbar:
+    for data in train_pbar:
         img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
         label = data['labels']['M'].to(device)
         label = label.view(-1, 1)
@@ -102,14 +102,14 @@ def train(model, train_loader, optimizer, loss_fn, epoch, writer, metrics):
 
 
 def evaluate(model, eval_loader, optimizer, loss_fn, epoch, writer, save_path, metrics):
-    test_pbar = tqdm(enumerate(eval_loader))
+    test_pbar = tqdm(eval_loader)
 
     losses = AverageMeter()
     y_pred, y_true = [], []
 
     model.eval()
     with torch.no_grad():
-        for cur_iter, data in test_pbar:
+        for data in test_pbar:
             img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
             label = data['labels']['M'].to(device)
             label = label.view(-1, 1)
@@ -139,14 +139,14 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, writer, save_path, m
 
 
 def test(model, test_loader, optimizer, loss_fn, epoch, writer, metrics):
-    test_pbar = tqdm(enumerate(test_loader))
+    test_pbar = tqdm(test_loader)
 
     losses = AverageMeter()
     y_pred, y_true = [], []
 
     model.eval()
     with torch.no_grad():
-        for cur_iter, data in test_pbar:
+        for data in test_pbar:
             img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
             label = data['labels']['M'].to(device)
             label = label.view(-1, 1)
