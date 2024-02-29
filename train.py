@@ -2,7 +2,7 @@ import os
 import torch
 import numpy as np
 from tqdm import tqdm
-from opts import *
+from opts import parse_opts
 from core.dataset import MMDataLoader
 from core.scheduler import get_scheduler
 from core.utils import AverageMeter, save_model, setup_seed
@@ -21,12 +21,12 @@ print("device: {}:{}".format(device, opt.CUDA_VISIBLE_DEVICES))
 train_mae, val_mae = [], []
 
 
-def main():
-    opt = parse_opts()
+def main(parse_args):
+    opt = parse_args
     if opt.seed is not None:
         setup_seed(opt.seed)
     print("seed: {}".format(opt.seed))
-    
+
     log_path = os.path.join(".", "log", opt.project_name)
     if not os.path.exists(log_path):
         os.makedirs(log_path)
@@ -52,7 +52,6 @@ def main():
     metrics = MetricsTop().getMetics(opt.datasetName)
 
     writer = SummaryWriter(logdir=log_path)
-
 
     for epoch in range(1, opt.n_epochs+1):
         train(model, dataLoader['train'], optimizer, loss_fn, epoch, writer, metrics)
@@ -100,7 +99,6 @@ def train(model, train_loader, optimizer, loss_fn, epoch, writer, metrics):
     train_mae.append(train_results['MAE'])
 
     writer.add_scalar('train/loss', losses.value_avg, epoch)
-
 
 
 def evaluate(model, eval_loader, optimizer, loss_fn, epoch, writer, save_path, metrics):
@@ -174,5 +172,6 @@ def test(model, test_loader, optimizer, loss_fn, epoch, writer, metrics):
 
         writer.add_scalar('test/loss', losses.value_avg, epoch)
 
+
 if __name__ == '__main__':
-    main()
+    main(opt)
