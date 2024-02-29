@@ -28,12 +28,12 @@ def main():
     print("seed: {}".format(opt.seed))
     
     log_path = os.path.join(".", "log", opt.project_name)
-    if os.path.exists(log_path) == False:
+    if not os.path.exists(log_path):
         os.makedirs(log_path)
     print("log_path :", log_path)
 
     save_path = os.path.join(opt.models_save_root,  opt.project_name)
-    if os.path.exists(save_path) == False:
+    if not os.path.exists(save_path):
         os.makedirs(save_path)
     print("model_save_path :", save_path)
 
@@ -41,9 +41,11 @@ def main():
 
     dataLoader = MMDataLoader(opt)
 
-    optimizer = torch.optim.AdamW(model.parameters(),
-                                 lr=opt.lr,
-                                 weight_decay=opt.weight_decay)
+    optimizer = torch.optim.AdamW(
+        model.parameters(),
+        lr=opt.lr,
+        weight_decay=opt.weight_decay
+    )
 
     scheduler_warmup = get_scheduler(optimizer, opt)
     loss_fn = torch.nn.MSELoss()
@@ -135,7 +137,7 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, writer, save_path, m
 
         writer.add_scalar('evaluate/loss', losses.value_avg, epoch)
 
-        save_model(save_path, epoch, model, optimizer)
+        # save_model(save_path, epoch, model, optimizer)
 
 
 def test(model, test_loader, optimizer, loss_fn, epoch, writer, metrics):

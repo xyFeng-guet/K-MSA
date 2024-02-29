@@ -74,9 +74,9 @@ class ALMT(nn.Module):
 
 def build_model(opt):
     if opt.datasetName == 'sims':
-        l_pretrained='bert-base-chinese'
+        l_pretrained='./bert-base-chinese'
     else:
-        l_pretrained='bert-base-uncased'
+        l_pretrained='./bert-base-uncased'
 
     model = ALMT(dataset = opt.datasetName, fusion_layer_depth=opt.fusion_layer_depth, bert_pretrained = l_pretrained)
 

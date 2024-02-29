@@ -10,12 +10,12 @@ def parse_opts():
     parser = argparse.ArgumentParser()
     arguments = {
         'dataset': [
-            dict(name='--datasetName',        
+            dict(name='--datasetName',
                  type=str,
                  default='mosi',
                  help='mosi, mosei or sims'),
             dict(name='--dataPath',
-                 default="./datasets/unaligned_50.pkl",
+                 default="/opt/data/private/Project/Datasets/MSA_Datasets/MOSI/Processed/unaligned_50.pkl",
                  type=str,
                  help=' '),
             dict(name='--seq_lens',     
@@ -33,7 +33,7 @@ def parse_opts():
         ],
         'network': [
             dict(name='--CUDA_VISIBLE_DEVICES',        
-                 default='6',
+                 default='0',
                  type=str),
             dict(name='--fusion_layer_depth',
                  default=2,
@@ -42,7 +42,7 @@ def parse_opts():
 
         'common': [
             dict(name='--project_name',    
-                 default='ALMT_Demo',
+                 default='fineTune_mosi',
                  type=str
                  ),
            dict(name='--is_test',    
