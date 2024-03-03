@@ -4,7 +4,7 @@
 '''
 
 import torch
-from torch import nn
+import torch.nn as nn
 from .almt_layer import Transformer, CrossTransformer, HhyperLearningEncoder
 from .bert import BertTextEncoder
 from einops import repeat
@@ -13,9 +13,7 @@ from einops import repeat
 class ALMT(nn.Module):
     def __init__(self, dataset, AHL_depth=3, fusion_layer_depth=2, bert_pretrained='bert-base-uncased'):
         super(ALMT, self).__init__()
-
         self.h_hyper = nn.Parameter(torch.ones(1, 8, 128))
-
         self.bertmodel = BertTextEncoder(use_finetune=True, transformers='bert', pretrained=bert_pretrained)
 
         # mosi
@@ -34,7 +32,6 @@ class ALMT(nn.Module):
         else:
             assert False, "DatasetName must be mosi, mosei or sims."
 
-
         self.proj_l = Transformer(num_frames=50, save_hidden=False, token_len=8, dim=128, depth=1, heads=8, mlp_dim=128)
         self.proj_a = Transformer(num_frames=50, save_hidden=False, token_len=8, dim=128, depth=1, heads=8, mlp_dim=128)
         self.proj_v = Transformer(num_frames=50, save_hidden=False, token_len=8, dim=128, depth=1, heads=8, mlp_dim=128)
@@ -47,11 +44,10 @@ class ALMT(nn.Module):
             nn.Linear(128, 1)
         )
 
-
     def forward(self, x_visual, x_audio, x_text):
         b = x_visual.size(0)
 
-        h_hyper = repeat(self.h_hyper, '1 n d -> b n d', b = b)
+        h_hyper = repeat(self.h_hyper, '1 n d -> b n d', b=b)
 
         x_text = self.bertmodel(x_text)
 
@@ -74,10 +70,10 @@ class ALMT(nn.Module):
 
 def build_model(opt):
     if opt.datasetName == 'sims':
-        l_pretrained='./bert-base-chinese'
+        l_pretrained = './bert-base-chinese'
     else:
-        l_pretrained='./bert-base-uncased'
+        l_pretrained = './bert-base-uncased'
 
-    model = ALMT(dataset = opt.datasetName, fusion_layer_depth=opt.fusion_layer_depth, bert_pretrained = l_pretrained)
+    model = ALMT(dataset=opt.datasetName, fusion_layer_depth=opt.fusion_layer_depth, bert_pretrained=l_pretrained)
 
     return model
