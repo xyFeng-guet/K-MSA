@@ -40,7 +40,7 @@ class ALMT(nn.Module):
         self.proj_v = Transformer(num_frames=50, save_hidden=False, token_len=8, dim=128, depth=1, heads=8, mlp_dim=128)
 
         self.text_encoder = Transformer(num_frames=8, save_hidden=True, token_len=None, dim=128, depth=AHL_depth-1, heads=8, mlp_dim=128)
-        self.h_hyper_layer = HhyperLearningEncoder(dim=128, depth=AHL_depth, heads=8, dim_head=16, dropout = 0.)
+        self.h_hyper_layer = HhyperLearningEncoder(dim=128, depth=AHL_depth, heads=8, dim_head=16, dropout=0.)
         self.fusion_layer = CrossTransformer(source_num_frames=8, tgt_num_frames=8, dim=128, depth=fusion_layer_depth, heads=8, mlp_dim=128)
 
         self.cls_head = nn.Sequential(
