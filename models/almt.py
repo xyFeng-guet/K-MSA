@@ -55,6 +55,7 @@ class ALMT(nn.Module):
         x_audio = self.proj_a0(x_audio)
         x_text = self.proj_l0(x_text)
 
+        # Encoder Part
         h_v = self.proj_v(x_visual)[:, :8]
         h_a = self.proj_a(x_audio)[:, :8]
         h_t = self.proj_l(x_text)[:, :8]

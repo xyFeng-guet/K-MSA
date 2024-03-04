@@ -39,7 +39,7 @@ class MMDataset(Dataset):
             self.text = data[self.mode]['text_bert'].astype(np.float32)
         else:
             self.text = data[self.mode]['text'].astype(np.float32)
-     
+
         self.vision = data[self.mode]['vision'].astype(np.float32)
         self.audio = data[self.mode]['audio'].astype(np.float32)
 
@@ -77,19 +77,19 @@ class MMDataset(Dataset):
             padding = np.array([0 for i in range(modal_features.shape[2])])
             for instance in modal_features:
                 for index in range(modal_features.shape[1]):
-                    if((instance[index] == padding).all()):
-                        if(index + length >= modal_features.shape[1]):
+                    if ((instance[index] == padding).all()):
+                        if (index + length >= modal_features.shape[1]):
                             truncated_feature.append(instance[index:index+length])
                             break
-                    else:                        
+                    else:
                         truncated_feature.append(instance[index:index+length])
                         break
             truncated_feature = np.array(truncated_feature)
             return truncated_feature
-                       
+
         text_length, audio_length, video_length = self.args.seq_lens
 
-        audio_length, video_length =[50,50] 
+        audio_length, video_length = [50, 50]
         self.vision = Truncated(self.vision, video_length)
         # self.text = Truncated(self.text, text_length)
         self.audio = Truncated(self.audio, audio_length)
@@ -109,13 +109,13 @@ class MMDataset(Dataset):
     def __getitem__(self, index):
         sample = {
             'raw_text': self.rawText[index],
-            'text': torch.Tensor(self.text[index]), 
+            'text': torch.Tensor(self.text[index]),
             'audio': torch.Tensor(self.audio[index]),
             'vision': torch.Tensor(self.vision[index]),
             'index': index,
             'id': self.ids[index],
             'labels': {k: torch.Tensor(v[index].reshape(-1)) for k, v in self.labels.items()}
-        } 
+        }
         if not self.args.need_data_aligned:
             sample['audio_lengths'] = self.audio_lengths[index]
             sample['vision_lengths'] = self.vision_lengths[index]
@@ -130,7 +130,7 @@ def MMDataLoader(args):
     }
 
     if 'seq_lens' in args:
-        args.seq_lens = datasets['train'].get_seq_len() 
+        args.seq_lens = datasets['train'].get_seq_len()
 
     dataLoader = {
         ds: DataLoader(datasets[ds],
@@ -139,5 +139,5 @@ def MMDataLoader(args):
                        shuffle=True)
         for ds in datasets.keys()
     }
-    
+
     return dataLoader
