@@ -17,6 +17,7 @@ class PreNormForward(nn.Module):
         super().__init__()
         self.norm = nn.LayerNorm(dim)
         self.fn = fn
+
     def forward(self, x, **kwargs):
         return self.fn(self.norm(x), **kwargs)
 
@@ -56,7 +57,7 @@ class PreNormAHL(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim, hidden_dim, dropout = 0.):
+    def __init__(self, dim, hidden_dim, dropout=0.):
         super().__init__()
         self.net = nn.Sequential(
             nn.Linear(dim, hidden_dim),
@@ -65,20 +66,21 @@ class FeedForward(nn.Module):
             nn.Linear(hidden_dim, dim),
             nn.Dropout(dropout)
         )
+
     def forward(self, x):
         return self.net(x)
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
         super().__init__()
-        inner_dim = dim_head *  heads
+        inner_dim = dim_head * heads
         project_out = not (heads == 1 and dim_head == dim)
 
         self.heads = heads
         self.scale = dim_head ** -0.5
 
-        self.attend = nn.Softmax(dim = -1)
+        self.attend = nn.Softmax(dim=-1)
         self.to_q = nn.Linear(dim, inner_dim, bias=False)
         self.to_k = nn.Linear(dim, inner_dim, bias=False)
         self.to_v = nn.Linear(dim, inner_dim, bias=False)
@@ -106,15 +108,15 @@ class Attention(nn.Module):
 
 
 class HhyperLearningLayer(nn.Module):
-    def __init__(self, dim, heads = 8, dim_head = 64, dropout = 0.):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
         super().__init__()
-        inner_dim = dim_head *  heads
+        inner_dim = dim_head * heads
         project_out = not (heads == 1 and dim_head == dim)
 
         self.heads = heads
         self.scale = dim_head ** -0.5
 
-        self.attend = nn.Softmax(dim = -1)
+        self.attend = nn.Softmax(dim=-1)
         self.to_q = nn.Linear(dim, inner_dim, bias=False)
         self.to_k_ta = nn.Linear(dim, inner_dim, bias=False)
         self.to_k_tv = nn.Linear(dim, inner_dim, bias=False)
@@ -154,12 +156,12 @@ class HhyperLearningLayer(nn.Module):
 
 
 class HhyperLearningEncoder(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, dropout = 0.):
+    def __init__(self, dim, depth, heads, dim_head, dropout=0.):
         super().__init__()
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNormAHL(dim, HhyperLearningLayer(dim, heads = heads, dim_head = dim_head, dropout = dropout))
+                PreNormAHL(dim, HhyperLearningLayer(dim, heads=heads, dim_head=dim_head, dropout=dropout))
             ]))
 
     def forward(self, h_t_list, h_a, h_v, h_hyper):
@@ -169,17 +171,17 @@ class HhyperLearningEncoder(nn.Module):
 
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
         super().__init__()
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNormAttention(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout)),
-                PreNormForward(dim, FeedForward(dim, mlp_dim, dropout = dropout))
+                PreNormAttention(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNormForward(dim, FeedForward(dim, mlp_dim, dropout=dropout))
             ]))
 
     def forward(self, x, save_hidden=False):
-        if save_hidden == True:
+        if save_hidden:
             hidden_list = []
             hidden_list.append(x)
             for attn, ff in self.layers:
@@ -195,13 +197,13 @@ class TransformerEncoder(nn.Module):
 
 
 class CrossTransformerEncoder(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
         super().__init__()
         self.layers = nn.ModuleList([])
         for _ in range(depth):
             self.layers.append(nn.ModuleList([
-                PreNormAttention(dim, Attention(dim, heads = heads, dim_head = dim_head, dropout = dropout)),
-                PreNormForward(dim, FeedForward(dim, mlp_dim, dropout = dropout))
+                PreNormAttention(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                PreNormForward(dim, FeedForward(dim, mlp_dim, dropout=dropout))
             ]))
 
     def forward(self, source_x, target_x):
@@ -213,7 +215,7 @@ class CrossTransformerEncoder(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, *, num_frames, token_len, save_hidden, dim, depth, heads, mlp_dim, pool = 'cls', channels = 3, dim_head = 64, dropout = 0., emb_dropout = 0.):
+    def __init__(self, *, num_frames, token_len, save_hidden, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0.):
         super().__init__()
 
         self.token_len = token_len
@@ -223,8 +225,8 @@ class Transformer(nn.Module):
             self.pos_embedding = nn.Parameter(torch.randn(1, num_frames + token_len, dim))
             self.extra_token = nn.Parameter(torch.zeros(1, token_len, dim))
         else:
-             self.pos_embedding = nn.Parameter(torch.randn(1, num_frames, dim))
-             self.extra_token = None
+            self.pos_embedding = nn.Parameter(torch.randn(1, num_frames, dim))
+            self.extra_token = None
 
         self.dropout = nn.Dropout(emb_dropout)
 
@@ -233,12 +235,11 @@ class Transformer(nn.Module):
         self.pool = pool
         self.to_latent = nn.Identity()
 
-
     def forward(self, x):
         b, n, _ = x.shape
 
         if self.token_len is not None:
-            extra_token = repeat(self.extra_token, '1 n d -> b n d', b = b)
+            extra_token = repeat(self.extra_token, '1 n d -> b n d', b=b)
             x = torch.cat((extra_token, x), dim=1)
             x = x + self.pos_embedding[:, :n+self.token_len]
         else:
@@ -251,7 +252,7 @@ class Transformer(nn.Module):
 
 
 class CrossTransformer(nn.Module):
-    def __init__(self, *, source_num_frames, tgt_num_frames, dim, depth, heads, mlp_dim, pool = 'cls', dim_head = 64, dropout = 0., emb_dropout = 0.):
+    def __init__(self, *, source_num_frames, tgt_num_frames, dim, depth, heads, mlp_dim, pool='cls', dim_head=64, dropout=0., emb_dropout=0.):
         super().__init__()
 
         self.pos_embedding_s = nn.Parameter(torch.randn(1, source_num_frames + 1, dim))
@@ -268,7 +269,7 @@ class CrossTransformer(nn.Module):
         b, n_s, _ = source_x.shape
         b, n_t, _ = target_x.shape
 
-        extra_token = repeat(self.extra_token, '1 1 d -> b 1 d', b = b)
+        extra_token = repeat(self.extra_token, '1 1 d -> b 1 d', b=b)
 
         source_x = torch.cat((extra_token, source_x), dim=1)
         source_x = source_x + self.pos_embedding_s[:, : n_s+1]
@@ -282,4 +283,3 @@ class CrossTransformer(nn.Module):
         x_s2t = self.CrossTransformerEncoder(source_x, target_x)
 
         return x_s2t
-

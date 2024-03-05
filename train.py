@@ -175,3 +175,7 @@ def test(model, test_loader, optimizer, loss_fn, epoch, writer, metrics):
 
 if __name__ == '__main__':
     main(opt)
+
+'''
+test: {'Has0_acc_2': 0.8382, 'Has0_F1_score': 0.8402, 'Non0_acc_2': 0.8613, 'Non0_F1_score': 0.8624, 'Mult_acc_5': 0.5262, 'Mult_acc_7': 0.4606, 'MAE': 0.7066, 'Corr': 0.7899}
+'''

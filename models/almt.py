@@ -41,7 +41,10 @@ class ALMT(nn.Module):
         self.fusion_layer = CrossTransformer(source_num_frames=8, tgt_num_frames=8, dim=128, depth=fusion_layer_depth, heads=8, mlp_dim=128)
 
         self.cls_head = nn.Sequential(
-            nn.Linear(128, 1)
+            nn.Linear(128, 64),
+            nn.Linear(64, 64),
+            nn.ReLU(),
+            nn.Linear(64, 1)
         )
 
     def forward(self, x_visual, x_audio, x_text):
@@ -60,10 +63,12 @@ class ALMT(nn.Module):
         h_a = self.proj_a(x_audio)[:, :8]
         h_t = self.proj_l(x_text)[:, :8]
 
-        h_t_list = self.text_encoder(h_t)
-
+        # Adaptive Hyper-modality Learning
+        h_t_list = self.text_encoder(h_t)       # 先获得 AHL 中文本经过 Transformer 后的 H_m^1,2,3
         h_hyper = self.h_hyper_layer(h_t_list, h_a, h_v, h_hyper)
-        feat = self.fusion_layer(h_hyper, h_t_list[-1])[:, 0]
+
+        # Fusion and Classficiation
+        feat = self.fusion_layer(h_hyper, h_t_list[-1])[:, 0]   # 取首位进行预测，认为是 CLS-token
         output = self.cls_head(feat)
 
         return output
