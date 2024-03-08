@@ -7,7 +7,8 @@ import pandas as pd
 def options():
     parser = argparse.ArgumentParser(description="Select samples from a dataset")
     parser.add_argument("--dataset_name", type=str, default="SIMS", required=False, help="Name of the dataset")
-    parser.add_argument("--num_samples", type=int, default="100", required=False, help="Number of samples to select")
+    parser.add_argument("--num_samples", type=int, default="10000", required=False, help="Number of samples to select")
+    parser.add_argument("--match_modality", type=str, default="A", required=False, choices=["t", "v", "a", "tv", "ta", "va"], help="Modality to match with the label.")
     args = parser.parse_args()
     return args
 
@@ -42,13 +43,13 @@ def get_data(dataset_name):
     return data_samples
 
 
-def select_samples(data, num_samples):
+def select_samples(data, num_samples, match_modality):
     samples_list = []
 
     for i in range(len(data)):
         sample = data[i]
-        if sample["label"] >= 0 and sample["label_v"] < 0 or sample["label"] <= 0 and sample["label_v"] > 0 or sample["label"] != 0 and sample["label_v"] == 0:     # 选择某一模态情感与多模态情感不符合的样例
-            sample["error"] = abs(sample["label"] - sample["label_v"])
+        if sample["label"] >= 0 and sample[f"label_{match_modality}"] < 0 or sample["label"] <= 0 and sample[f"label_{match_modality}"] > 0 or sample["label"] != 0 and sample[f"label_{match_modality}"] == 0:     # 选择某一模态情感与多模态情感不符合的样例
+            sample["error"] = abs(sample["label"] - sample[f"label_{match_modality}"])
             samples_list.append(sample)
         if len(samples_list) >= num_samples:
             break
@@ -56,12 +57,22 @@ def select_samples(data, num_samples):
     # 将选中的样例保存为csv文件
     selected_samples = pd.DataFrame(samples_list)
     selected_samples = selected_samples.sort_values(by="error", ascending=False)    # 按照error列的大小排序
-    selected_samples.to_csv("./select-task-data/selected_samples_v.csv", index=False)
+    selected_samples.to_csv(f"./select-task-data/selected_samples_{match_modality}_all.csv", index=False)
     return data
+
+# 交集
+def request
 
 
 if __name__ == '__main__':
     args = options()
     data = get_data(args.dataset_name)
-    selected_data = select_samples(data, args.num_samples)
+    selected_data = select_samples(data, args.num_samples, args.match_modality)
     print(f"Selected {len(selected_data)} samples from {args.dataset_name}")
+
+'''
+SIMS数据集总共2281个样例
+T 情感与多模态情感不符合的样例有: 705个   30.91%
+V 情感与多模态情感不符合的样例有: 499个   21.88%
+A 情感与多模态情感不符合的样例有: 504个   22.10%
+'''
