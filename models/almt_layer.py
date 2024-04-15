@@ -38,24 +38,6 @@ class PreNormAttention(nn.Module):
         return self.fn(q, k, v)
 
 
-class PreNormAHL(nn.Module):
-    def __init__(self, dim, fn):
-        super().__init__()
-        self.norm1 = nn.LayerNorm(dim)
-        self.norm2 = nn.LayerNorm(dim)
-        self.norm3 = nn.LayerNorm(dim)
-        self.norm4 = nn.LayerNorm(dim)
-        self.fn = fn
-
-    def forward(self, h_t, h_a, h_v, h_hyper):
-        h_t = self.norm1(h_t)
-        h_a = self.norm2(h_a)
-        h_v = self.norm3(h_v)
-        h_hyper = self.norm4(h_hyper)
-
-        return self.fn(h_t, h_a, h_v, h_hyper)
-
-
 class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout=0.):
         super().__init__()
@@ -105,69 +87,6 @@ class Attention(nn.Module):
         out = rearrange(out, 'b h n d -> b n (h d)')
 
         return self.to_out(out)
-
-
-class HhyperLearningLayer(nn.Module):
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
-        super().__init__()
-        inner_dim = dim_head * heads
-        project_out = not (heads == 1 and dim_head == dim)
-
-        self.heads = heads
-        self.scale = dim_head ** -0.5
-
-        self.attend = nn.Softmax(dim=-1)
-        self.to_q = nn.Linear(dim, inner_dim, bias=False)
-        self.to_k_ta = nn.Linear(dim, inner_dim, bias=False)
-        self.to_k_tv = nn.Linear(dim, inner_dim, bias=False)
-        self.to_v_ta = nn.Linear(dim, inner_dim, bias=False)
-        self.to_v_tv = nn.Linear(dim, inner_dim, bias=False)
-
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim, bias=True),
-            nn.Dropout(dropout)
-        ) if project_out else nn.Identity()
-
-    def forward(self, h_t, h_a, h_v, h_hyper):
-        b, n, _, h = *h_t.shape, self.heads
-
-        q = self.to_q(h_t)
-        k_ta = self.to_k_ta(h_a)
-        k_tv = self.to_k_tv(h_v)
-        v_ta = self.to_v_ta(h_a)
-        v_tv = self.to_v_tv(h_v)
-
-        q, k_ta, k_tv, v_ta, v_tv = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k_ta, k_tv, v_ta, v_tv))
-
-        dots_ta = einsum('b h i d, b h j d -> b h i j', q, k_ta) * self.scale
-        attn_ta = self.attend(dots_ta)
-        out_ta = einsum('b h i j, b h j d -> b h i d', attn_ta, v_ta)
-        out_ta = rearrange(out_ta, 'b h n d -> b n (h d)')
-
-        dots_tv = einsum('b h i d, b h j d -> b h i j', q, k_tv) * self.scale
-        attn_tv = self.attend(dots_tv)
-        out_tv = einsum('b h i j, b h j d -> b h i d', attn_tv, v_tv)
-        out_tv = rearrange(out_tv, 'b h n d -> b n (h d)')
-
-        h_hyper_shift = self.to_out(out_ta + out_tv)
-        h_hyper += h_hyper_shift
-
-        return h_hyper
-
-
-class HhyperLearningEncoder(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, dropout=0.):
-        super().__init__()
-        self.layers = nn.ModuleList([])
-        for _ in range(depth):
-            self.layers.append(nn.ModuleList([
-                PreNormAHL(dim, HhyperLearningLayer(dim, heads=heads, dim_head=dim_head, dropout=dropout))
-            ]))
-
-    def forward(self, h_t_list, h_a, h_v, h_hyper):
-        for i, attn in enumerate(self.layers):
-            h_hyper = attn[0](h_t_list[i], h_a, h_v, h_hyper)
-        return h_hyper
 
 
 class TransformerEncoder(nn.Module):

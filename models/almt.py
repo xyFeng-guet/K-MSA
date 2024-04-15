@@ -5,14 +5,14 @@
 
 import torch
 from torch import nn
-from .almt_layer import Transformer, CrossTransformer, HhyperLearningEncoder
+from .almt_layer import Transformer, CrossTransformer
 from .bert import BertTextEncoder
 
 
 class KMSA(nn.Module):
     def __init__(self, dataset, AHL_depth=3, fusion_layer_depth=2, bert_pretrained='bert-base-uncased'):
         super(KMSA, self).__init__()
-        self.bertmodel = BertTextEncoder(use_finetune=True, transformers='bert', pretrained=bert_pretrained)
+        self.bertmodel = BertTextEncoder(use_finetune=True, pretrained=bert_pretrained)
 
         if dataset == 'mosi':
             self.proj_l0 = nn.Linear(768, 128)

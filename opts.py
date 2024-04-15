@@ -1,9 +1,3 @@
-'''
-* @name: opts.py
-* @description: Hyperparameter configuration. Note: For hyperparameter settings, please refer to the appendix of the paper.
-'''
-
-
 import argparse
 
 
@@ -13,10 +7,10 @@ def parse_opts():
         'dataset': [
             dict(name='--datasetName',
                  type=str,
-                 default='sims',
+                 default='mosei',
                  help='mosi, mosei or sims'),
             dict(name='--dataPath',
-                 default="/opt/data/private/Project/Datasets/MSA_Datasets/SIMS/Processed/unaligned_39.pkl",
+                 default="/opt/data/private/Project/Datasets/MSA_Datasets/MOSEI/Processed/unaligned_50.pkl",
                  type=str,
                  help=' '),
             dict(name='--seq_lens',
