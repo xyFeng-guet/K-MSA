@@ -4,19 +4,16 @@
 '''
 
 import torch
-import torch.nn as nn
+from torch import nn
 from .almt_layer import Transformer, CrossTransformer, HhyperLearningEncoder
 from .bert import BertTextEncoder
-from einops import repeat
 
 
-class ALMT(nn.Module):
+class KMSA(nn.Module):
     def __init__(self, dataset, AHL_depth=3, fusion_layer_depth=2, bert_pretrained='bert-base-uncased'):
-        super(ALMT, self).__init__()
-        self.h_hyper = nn.Parameter(torch.ones(1, 8, 128))
+        super(KMSA, self).__init__()
         self.bertmodel = BertTextEncoder(use_finetune=True, transformers='bert', pretrained=bert_pretrained)
 
-        # mosi
         if dataset == 'mosi':
             self.proj_l0 = nn.Linear(768, 128)
             self.proj_a0 = nn.Linear(5, 128)
@@ -36,22 +33,18 @@ class ALMT(nn.Module):
         self.proj_a = Transformer(num_frames=50, save_hidden=False, token_len=8, dim=128, depth=1, heads=8, mlp_dim=128)
         self.proj_v = Transformer(num_frames=50, save_hidden=False, token_len=8, dim=128, depth=1, heads=8, mlp_dim=128)
 
-        self.text_encoder = Transformer(num_frames=8, save_hidden=True, token_len=None, dim=128, depth=AHL_depth-1, heads=8, mlp_dim=128)
-        self.h_hyper_layer = HhyperLearningEncoder(dim=128, depth=AHL_depth, heads=8, dim_head=16, dropout=0.)
-        self.fusion_layer = CrossTransformer(source_num_frames=8, tgt_num_frames=8, dim=128, depth=fusion_layer_depth, heads=8, mlp_dim=128)
-
-        self.cls_head = nn.Sequential(
-            nn.Linear(128, 64),
-            nn.Linear(64, 64),
+        # self.text_encoder = Transformer(num_frames=8, save_hidden=True, token_len=None, dim=128, depth=AHL_depth-1, heads=8, mlp_dim=128)
+        # self.h_hyper_layer = HhyperLearningEncoder(dim=128, depth=AHL_depth, heads=8, dim_head=16, dropout=0.)
+        # self.fusion_layer = CrossTransformer(source_num_frames=8, tgt_num_frames=8, dim=128, depth=fusion_layer_depth, heads=8, mlp_dim=128)
+        self.fusion_layer = nn.Sequential(
+            nn.Linear(128 * 3, 128, bias=True),
             nn.ReLU(),
-            nn.Linear(64, 1)
+            nn.Linear(128, 128, bias=True),
+            nn.ReLU(),
+            nn.Linear(128, 1, bias=True)
         )
 
     def forward(self, x_visual, x_audio, x_text):
-        b = x_visual.size(0)
-
-        h_hyper = repeat(self.h_hyper, '1 n d -> b n d', b=b)
-
         x_text = self.bertmodel(x_text)
 
         x_visual = self.proj_v0(x_visual)
@@ -64,12 +57,21 @@ class ALMT(nn.Module):
         h_t = self.proj_l(x_text)[:, :8]
 
         # Adaptive Hyper-modality Learning
-        h_t_list = self.text_encoder(h_t)       # 先获得 AHL 中文本经过 Transformer 后的 H_m^1,2,3
-        h_hyper = self.h_hyper_layer(h_t_list, h_a, h_v, h_hyper)
+        # h_t_list = self.text_encoder(h_t)
+        # h_hyper = self.h_hyper_layer(h_t_list, h_a, h_v)
+        h_v_global = torch.mean(h_v, dim=1)
+        h_a_global = torch.mean(h_a, dim=1)
+        h_t_global = torch.mean(h_t, dim=1)
+
+        '''
+        通过转换维度 在经过线性层 对齐length维度 每个token都可以获得其他token的信息 但是还是保持大部分原有的特征
+        这样可以在跨模态融合时,不会因为mask不统一而出现噪声
+        '''
 
         # Fusion and Classficiation
-        feat = self.fusion_layer(h_hyper, h_t_list[-1])[:, 0]   # 取首位进行预测，认为是 CLS-token
-        output = self.cls_head(feat)
+        # feat = self.fusion_layer(h_t_list[-1])[:, 0]
+        fusion_features = torch.cat((h_v_global, h_a_global, h_t_global), dim=-1)
+        output = self.fusion_layer(fusion_features)
 
         return output
 
@@ -80,6 +82,6 @@ def build_model(opt):
     else:
         l_pretrained = './bert-base-uncased'
 
-    model = ALMT(dataset=opt.datasetName, fusion_layer_depth=opt.fusion_layer_depth, bert_pretrained=l_pretrained)
+    model = KMSA(dataset=opt.datasetName, fusion_layer_depth=opt.fusion_layer_depth, bert_pretrained=l_pretrained)
 
     return model

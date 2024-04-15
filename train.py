@@ -18,9 +18,6 @@ device = torch.device("cuda" if USE_CUDA else "cpu")
 print("device: {}:{}".format(device, opt.CUDA_VISIBLE_DEVICES))
 
 
-train_mae, val_mae = [], []
-
-
 def main(parse_args):
     opt = parse_args
     if opt.seed is not None:
@@ -67,6 +64,7 @@ def train(model, train_loader, optimizer, loss_fn, epoch, writer, metrics):
     losses = AverageMeter()
 
     y_pred, y_true = [], []
+    train_mae = []
 
     model.train()
     for data in train_pbar:
