@@ -1,32 +1,30 @@
 import os
-import logging
 import torch
+import time
 from tqdm import tqdm
 from opts import parse_opts
 from core.dataset import MMDataLoader
 from core.scheduler import get_scheduler
-from core.utils import AverageMeter, save_model, setup_seed
+from core.utils import AverageMeter, save_model, setup_seed, ConfigLogging, save_print_results
 from models.almt import build_model
 from core.metric import MetricsTop
 
 
 opt = parse_opts()
-os.environ["CUDA_VISIBLE_DEVICES"] = opt.CUDA_VISIBLE_DEVICES
-USE_CUDA = torch.cuda.is_available()
-device = torch.device("cuda" if USE_CUDA else "cpu")
-print("device: {}:{}".format(device, opt.CUDA_VISIBLE_DEVICES))
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def main(parse_args):
     opt = parse_args
-    if opt.seed is not None:
-        setup_seed(opt.seed)
-    print("seed: {}".format(opt.seed))
 
-    log_path = os.path.join(".", "log", opt.project_name)
+    log_path = os.path.join(opt.log_path, opt.datasetName.upper())
     if not os.path.exists(log_path):
         os.makedirs(log_path)
+    log_file = os.path.join(log_path, time.strftime('%Y-%m-%d-%H:%M:%S' + '.log'))
+    logger = ConfigLogging(log_file)
+    logger.info(opt)    # 保存当前模型参数
 
+    setup_seed(opt.seed)
     model = build_model(opt).to(device)
     dataLoader = MMDataLoader(opt)
     optimizer = torch.optim.AdamW(
@@ -35,15 +33,15 @@ def main(parse_args):
         weight_decay=opt.weight_decay
     )
 
-    scheduler_warmup = get_scheduler(optimizer, opt)
     loss_fn = torch.nn.MSELoss()
     metrics = MetricsTop().getMetics(opt.datasetName)
+    scheduler_warmup = get_scheduler(optimizer, opt)
 
     for epoch in range(1, opt.n_epochs+1):
-        train(model, dataLoader['train'], optimizer, loss_fn, epoch, metrics)
-        evaluate(model, dataLoader['valid'], optimizer, loss_fn, epoch, metrics)
-        if opt.is_test is not None:
-            test(model, dataLoader['test'], optimizer, loss_fn, epoch, metrics)
+        train_results = train(model, dataLoader['train'], optimizer, loss_fn, epoch, metrics)
+        valid_results = evaluate(model, dataLoader['valid'], optimizer, loss_fn, epoch, metrics)
+        test_results = test(model, dataLoader['test'], optimizer, loss_fn, epoch, metrics)
+        save_print_results(opt, logger, train_results, valid_results, test_results)
         scheduler_warmup.step()
 
 
@@ -62,10 +60,9 @@ def train(model, train_loader, optimizer, loss_fn, epoch, metrics):
         output = model(img, audio, text)
 
         loss = loss_fn(output, label)
-
         losses.update(loss.item(), batchsize)
-
         loss.backward()
+
         optimizer.step()
         optimizer.zero_grad()
 
@@ -82,6 +79,8 @@ def train(model, train_loader, optimizer, loss_fn, epoch, metrics):
     pred, true = torch.cat(y_pred), torch.cat(y_true)
     train_results = metrics(pred, true)
 
+    return train_results
+
 
 def evaluate(model, eval_loader, optimizer, loss_fn, epoch, metrics):
     test_pbar = tqdm(eval_loader)
@@ -97,12 +96,10 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, metrics):
             batchsize = img.shape[0]
 
             output = model(img, audio, text)
-
-            loss = loss_fn(output, label)
-
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
+            loss = loss_fn(output, label)
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('eval')
@@ -113,7 +110,9 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, metrics):
             })
 
         pred, true = torch.cat(y_pred), torch.cat(y_true)
-        test_results = metrics(pred, true)
+        valid_results = metrics(pred, true)
+
+    return valid_results
 
 
 def test(model, test_loader, optimizer, loss_fn, epoch, metrics):
@@ -130,12 +129,10 @@ def test(model, test_loader, optimizer, loss_fn, epoch, metrics):
             batchsize = img.shape[0]
 
             output = model(img, audio, text)
-
-            loss = loss_fn(output, label)
-
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
+            loss = loss_fn(output, label)
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('test')
@@ -147,6 +144,8 @@ def test(model, test_loader, optimizer, loss_fn, epoch, metrics):
 
         pred, true = torch.cat(y_pred), torch.cat(y_true)
         test_results = metrics(pred, true)
+
+    return test_results
 
 
 if __name__ == '__main__':

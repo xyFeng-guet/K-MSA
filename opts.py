@@ -28,21 +28,12 @@ def parse_opts():
         ],
 
         'network': [
-            dict(name='--CUDA_VISIBLE_DEVICES',
-                 default='0',
-                 type=str),
             dict(name='--fusion_layer_depth',
                  default=2,
                  type=int)
         ],
 
         'common': [
-            dict(name='--project_name',
-                 default='fineTune_mosi',
-                 type=str),
-            dict(name='--is_test',
-                 default=1,
-                 type=int),
             dict(name='--seed',  # try different seeds
                  default=18,
                  type=int),
@@ -50,10 +41,6 @@ def parse_opts():
                  default=64,
                  type=int,
                  help=' '),
-            dict(name='--n_threads',
-                 default=3,
-                 type=int,
-                 help='Number of threads for multi-thread loading'),
             dict(name='--lr',
                  type=float,
                  default=1e-4),
@@ -63,7 +50,11 @@ def parse_opts():
             dict(name='--n_epochs',
                  default=200,
                  type=int,
-                 help='Number of total epochs to run')
+                 help='Number of total epochs to run'),
+            dict(name='--log_path',
+                 default='./log',
+                 type=str,
+                 help='the logger path for save options and experience results')
         ]
     }
 

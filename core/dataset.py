@@ -1,10 +1,3 @@
-'''
-* @name: dataset.py
-* @description: Dataset loading functions. Note: The code source references MMSA (https://github.com/thuiar/MMSA/tree/master).
-'''
-
-
-import logging
 import pickle
 import numpy as np
 import torch
@@ -12,8 +5,6 @@ from torch.utils.data import Dataset, DataLoader
 
 
 __all__ = ['MMDataLoader']
-
-logger = logging.getLogger('MSA')
 
 
 class MMDataset(Dataset):
@@ -51,8 +42,6 @@ class MMDataset(Dataset):
         if self.args.datasetName == 'sims':
             for m in "TAV":
                 self.labels[m] = data[self.mode][self.args.train_mode+'_labels_'+m]
-
-        logger.info(f"{self.mode} samples: {self.labels['M'].shape}")
 
         if not self.args.need_data_aligned:
             self.audio_lengths = data[self.mode]['audio_lengths']

@@ -1,13 +1,9 @@
-'''
-* @name: utils.py
-* @description: Other functions.
-'''
-
-
 import os
+import logging
 import random
 import numpy as np
 import torch
+from tabulate import tabulate
 
 
 class AverageMeter(object):
@@ -30,17 +26,37 @@ class AverageMeter(object):
         self.value_avg = self.value_sum / self.count
 
 
-def setup_seed(seed):
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    random.seed(seed)
-    np.random.seed(seed)
+def ConfigLogging(file_path):
+    # 创建一个 logger
+    logger = logging.getLogger("save_option_results")
+    logger.setLevel(logging.DEBUG)
 
-    torch.cuda.manual_seed(seed)
+    # 创建一个handler，用于写入日志文件
+    fh = logging.FileHandler(filename=file_path, encoding='utf8')
+    fh.setLevel(logging.DEBUG)
+
+    # 再创建一个handler，用于输出到控制台
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.DEBUG)
+
+    # 定义handler的输出格式
+    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+    fh.setFormatter(formatter)
+    ch.setFormatter(formatter)
+
+    # 给logger添加handler
+    logger.addHandler(fh)
+    logger.addHandler(ch)
+
+    return logger
+
+
+def setup_seed(seed):
+    torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
+    np.random.seed(seed)
+    random.seed(seed)
     torch.backends.cudnn.deterministic = True
-    torch.autograd.set_detect_anomaly(True)  # 检测梯度正向与反向传播异常
-    torch.backends.cudnn.benchmark = False
-    torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
 
 def save_model(save_path, epoch, model, optimizer):
@@ -53,3 +69,26 @@ def save_model(save_path, epoch, model, optimizer):
         'optimizer': optimizer.state_dict(),
     }
     torch.save(states, save_file_path)
+
+
+def save_print_results(opt, logger, train_re, valid_re, test_re):
+    if opt.datasetName != 'sims':
+        results = [
+            ["Train", train_re["MAE"], train_re["Corr"], train_re["Mult_acc_7"], train_re["Has0_acc_2"], train_re["Non0_acc_2"], train_re["Has0_F1_score"], train_re["Non0_F1_score"]],
+            ["Valid", valid_re["MAE"], valid_re["Corr"], valid_re["Mult_acc_7"], valid_re["Has0_acc_2"], valid_re["Non0_acc_2"], valid_re["Has0_F1_score"], valid_re["Non0_F1_score"]],
+            ["Test", test_re["MAE"], test_re["Corr"], test_re["Mult_acc_7"], test_re["Has0_acc_2"], test_re["Non0_acc_2"], test_re["Has0_F1_score"], test_re["Non0_F1_score"]]
+        ]
+        headers = ["Phase", "MAE", "Corr", "Acc-7", "Acc-2", "Acc-2-N0", "F1", "F1-N0"]
+
+        table = '\n' + tabulate(results, headers, tablefmt="grid") + '\n'
+        logger.info(table.replace('\n', '\n\n'))
+    else:
+        results = [
+            ["Train", train_re["MAE"], train_re["Corr"], train_re["Mult_acc_2"], train_re["Mult_acc_3"], train_re["Mult_acc_5"], train_re["F1_score"]],
+            ["Valid", valid_re["MAE"], valid_re["Corr"], valid_re["Mult_acc_2"], valid_re["Mult_acc_3"], valid_re["Mult_acc_5"], valid_re["F1_score"]],
+            ["Test", test_re["MAE"], test_re["Corr"], test_re["Mult_acc_2"], test_re["Mult_acc_3"], test_re["Mult_acc_5"], test_re["F1_score"]]
+        ]
+        headers = ["Phase", "MAE", "Corr", "Acc-2", "Acc-3", "Acc-5", "F1"]
+
+        table = '\n' + tabulate(results, headers, tablefmt="grid") + '\n'
+        logger.info(table.replace('\n', '\n\n'))
