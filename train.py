@@ -1,12 +1,11 @@
 import os
+import logging
 import torch
-import numpy as np
 from tqdm import tqdm
 from opts import parse_opts
 from core.dataset import MMDataLoader
 from core.scheduler import get_scheduler
 from core.utils import AverageMeter, save_model, setup_seed
-from tensorboardX import SummaryWriter
 from models.almt import build_model
 from core.metric import MetricsTop
 
@@ -27,17 +26,9 @@ def main(parse_args):
     log_path = os.path.join(".", "log", opt.project_name)
     if not os.path.exists(log_path):
         os.makedirs(log_path)
-    print("log_path :", log_path)
-
-    save_path = os.path.join(opt.models_save_root,  opt.project_name)
-    if not os.path.exists(save_path):
-        os.makedirs(save_path)
-    print("model_save_path :", save_path)
 
     model = build_model(opt).to(device)
-
     dataLoader = MMDataLoader(opt)
-
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=opt.lr,
@@ -48,23 +39,18 @@ def main(parse_args):
     loss_fn = torch.nn.MSELoss()
     metrics = MetricsTop().getMetics(opt.datasetName)
 
-    writer = SummaryWriter(logdir=log_path)
-
     for epoch in range(1, opt.n_epochs+1):
-        train(model, dataLoader['train'], optimizer, loss_fn, epoch, writer, metrics)
-        evaluate(model, dataLoader['valid'], optimizer, loss_fn, epoch, writer, save_path, metrics)
+        train(model, dataLoader['train'], optimizer, loss_fn, epoch, metrics)
+        evaluate(model, dataLoader['valid'], optimizer, loss_fn, epoch, metrics)
         if opt.is_test is not None:
-            test(model, dataLoader['test'], optimizer, loss_fn, epoch, writer, metrics)
+            test(model, dataLoader['test'], optimizer, loss_fn, epoch, metrics)
         scheduler_warmup.step()
-    writer.close()
 
 
-def train(model, train_loader, optimizer, loss_fn, epoch, writer, metrics):
+def train(model, train_loader, optimizer, loss_fn, epoch, metrics):
     train_pbar = tqdm(train_loader)
     losses = AverageMeter()
-
     y_pred, y_true = [], []
-    train_mae = []
 
     model.train()
     for data in train_pbar:
@@ -87,21 +73,18 @@ def train(model, train_loader, optimizer, loss_fn, epoch, writer, metrics):
         y_true.append(label.cpu())
 
         train_pbar.set_description('train')
-        train_pbar.set_postfix({'epoch': '{}'.format(epoch),
-                                'loss': '{:.5f}'.format(losses.value_avg),
-                                'lr:': '{:.2e}'.format(optimizer.state_dict()['param_groups'][0]['lr'])})
+        train_pbar.set_postfix({
+            'epoch': '{}'.format(epoch),
+            'loss': '{:.5f}'.format(losses.value_avg),
+            'lr:': '{:.2e}'.format(optimizer.state_dict()['param_groups'][0]['lr'])
+        })
 
     pred, true = torch.cat(y_pred), torch.cat(y_true)
     train_results = metrics(pred, true)
-    print('train: ', train_results)
-    train_mae.append(train_results['MAE'])
-
-    writer.add_scalar('train/loss', losses.value_avg, epoch)
 
 
-def evaluate(model, eval_loader, optimizer, loss_fn, epoch, writer, save_path, metrics):
+def evaluate(model, eval_loader, optimizer, loss_fn, epoch, metrics):
     test_pbar = tqdm(eval_loader)
-
     losses = AverageMeter()
     y_pred, y_true = [], []
 
@@ -123,22 +106,18 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, writer, save_path, m
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('eval')
-            test_pbar.set_postfix({'epoch': '{}'.format(epoch),
-                                   'loss': '{:.5f}'.format(losses.value_avg),
-                                   'lr:': '{:.2e}'.format(optimizer.state_dict()['param_groups'][0]['lr'])})
+            test_pbar.set_postfix({
+                'epoch': '{}'.format(epoch),
+                'loss': '{:.5f}'.format(losses.value_avg),
+                'lr:': '{:.2e}'.format(optimizer.state_dict()['param_groups'][0]['lr'])
+            })
 
         pred, true = torch.cat(y_pred), torch.cat(y_true)
         test_results = metrics(pred, true)
-        print(test_results)
-
-        writer.add_scalar('evaluate/loss', losses.value_avg, epoch)
-
-        # save_model(save_path, epoch, model, optimizer)
 
 
-def test(model, test_loader, optimizer, loss_fn, epoch, writer, metrics):
+def test(model, test_loader, optimizer, loss_fn, epoch, metrics):
     test_pbar = tqdm(test_loader)
-
     losses = AverageMeter()
     y_pred, y_true = [], []
 
@@ -160,15 +139,14 @@ def test(model, test_loader, optimizer, loss_fn, epoch, writer, metrics):
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('test')
-            test_pbar.set_postfix({'epoch': '{}'.format(epoch),
-                                   'loss': '{:.5f}'.format(losses.value_avg),
-                                   'lr:': '{:.2e}'.format(optimizer.state_dict()['param_groups'][0]['lr'])})
+            test_pbar.set_postfix({
+                'epoch': '{}'.format(epoch),
+                'loss': '{:.5f}'.format(losses.value_avg),
+                'lr:': '{:.2e}'.format(optimizer.state_dict()['param_groups'][0]['lr'])
+            })
 
         pred, true = torch.cat(y_pred), torch.cat(y_true)
         test_results = metrics(pred, true)
-        print(test_results)
-
-        writer.add_scalar('test/loss', losses.value_avg, epoch)
 
 
 if __name__ == '__main__':

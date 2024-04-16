@@ -31,11 +31,16 @@ class AverageMeter(object):
 
 
 def setup_seed(seed):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-    np.random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
     random.seed(seed)
+    np.random.seed(seed)
+
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
+    torch.autograd.set_detect_anomaly(True)  # 检测梯度正向与反向传播异常
+    torch.backends.cudnn.benchmark = False
+    torch.set_default_tensor_type('torch.cuda.FloatTensor')
 
 
 def save_model(save_path, epoch, model, optimizer):

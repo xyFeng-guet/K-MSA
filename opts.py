@@ -26,6 +26,7 @@ def parse_opts():
                  type=str,
                  help=' '),
         ],
+
         'network': [
             dict(name='--CUDA_VISIBLE_DEVICES',
                  default='0',
@@ -38,42 +39,31 @@ def parse_opts():
         'common': [
             dict(name='--project_name',
                  default='fineTune_mosi',
-                 type=str
-                 ),
+                 type=str),
             dict(name='--is_test',
                  default=1,
-                 type=int
-                 ),
+                 type=int),
             dict(name='--seed',  # try different seeds
                  default=18,
-                 type=int
-                 ),
-            dict(name='--models_save_root',
-                 default='./checkpoint',
-                 type=str
-                 ),
+                 type=int),
             dict(name='--batch_size',
                  default=64,
                  type=int,
                  help=' '),
-            dict(
-                name='--n_threads',
-                default=3,
-                type=int,
-                help='Number of threads for multi-thread loading',
-            ),
+            dict(name='--n_threads',
+                 default=3,
+                 type=int,
+                 help='Number of threads for multi-thread loading'),
             dict(name='--lr',
                  type=float,
                  default=1e-4),
             dict(name='--weight_decay',
                  type=float,
                  default=1e-4),
-            dict(
-                name='--n_epochs',
-                default=200,
-                type=int,
-                help='Number of total epochs to run',
-            )
+            dict(name='--n_epochs',
+                 default=200,
+                 type=int,
+                 help='Number of total epochs to run')
         ]
     }
 
