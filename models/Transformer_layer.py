@@ -1,8 +1,3 @@
-'''
-* @name: almt_layer.py
-* @description: Basic layer of ALMT. Note: Some code references Vision Transformer (VIT, https://github.com/gupta-abhay/pytorch-vit).
-'''
-
 import torch
 from torch import nn, einsum
 from einops import rearrange, repeat
@@ -99,20 +94,20 @@ class TransformerEncoder(nn.Module):
                 PreNormForward(dim, FeedForward(dim, mlp_dim, dropout=dropout))
             ]))
 
-    def forward(self, x, save_hidden=False):
-        if save_hidden:
-            hidden_list = []
-            hidden_list.append(x)
-            for attn, ff in self.layers:
-                x = attn(x, x, x) + x
-                x = ff(x) + x
-                hidden_list.append(x)
-            return hidden_list
-        else:
-            for attn, ff in self.layers:
-                x = attn(x, x, x) + x
-                x = ff(x) + x
-            return x
+    def forward(self, x):
+        # if save_hidden:
+        #     hidden_list = []
+        #     hidden_list.append(x)
+        #     for attn, ff in self.layers:
+        #         x = attn(x, x, x) + x
+        #         x = ff(x) + x
+        #         hidden_list.append(x)
+        #     return hidden_list
+        # else:
+        for attn, ff in self.layers:
+            x = attn(x, x, x) + x
+            x = ff(x) + x
+        return x
 
 
 class CrossTransformerEncoder(nn.Module):
@@ -134,38 +129,31 @@ class CrossTransformerEncoder(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, *, num_frames, token_len, save_hidden, dim, depth, heads, mlp_dim, pool='cls', channels=3, dim_head=64, dropout=0., emb_dropout=0.):
+    def __init__(self, *, num_frames, dim, depth, heads, mlp_dim, dim_head=64, dropout=0., emb_dropout=0.):
         super().__init__()
+        '''
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_frames + token_len, dim))
+        self.extra_token = nn.Parameter(torch.zeros(1, token_len, dim))
+        '''
 
-        self.token_len = token_len
-        self.save_hidden = save_hidden
-
-        if token_len is not None:
-            self.pos_embedding = nn.Parameter(torch.randn(1, num_frames + token_len, dim))
-            self.extra_token = nn.Parameter(torch.zeros(1, token_len, dim))
-        else:
-            self.pos_embedding = nn.Parameter(torch.randn(1, num_frames, dim))
-            self.extra_token = None
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_frames, dim))
+        self.extra_token = None
 
         self.dropout = nn.Dropout(emb_dropout)
 
         self.encoder = TransformerEncoder(dim, depth, heads, dim_head, mlp_dim, dropout)
 
-        self.pool = pool
-        self.to_latent = nn.Identity()
-
     def forward(self, x):
         b, n, _ = x.shape
 
-        if self.token_len is not None:
-            extra_token = repeat(self.extra_token, '1 n d -> b n d', b=b)
-            x = torch.cat((extra_token, x), dim=1)
-            x = x + self.pos_embedding[:, :n+self.token_len]
-        else:
-            x = x + self.pos_embedding[:, :n]
-
+        # if self.token_len is not None:
+        #     extra_token = repeat(self.extra_token, '1 n d -> b n d', b=b)
+        #     x = torch.cat((extra_token, x), dim=1)
+        #     x = x + self.pos_embedding[:, :n+self.token_len]
+        # else:
+        x = x + self.pos_embedding[:, :n]
         x = self.dropout(x)
-        x = self.encoder(x, self.save_hidden)
+        x = self.encoder(x)
 
         return x
 

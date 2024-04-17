@@ -5,8 +5,8 @@ from tqdm import tqdm
 from opts import parse_opts
 from core.dataset import MMDataLoader
 from core.scheduler import get_scheduler
-from core.utils import AverageMeter, save_model, setup_seed, ConfigLogging, save_print_results
-from models.almt import build_model
+from core.utils import AverageMeter, setup_seed, ConfigLogging, save_print_results
+from models.kmsa import build_model
 from core.metric import MetricsTop
 
 

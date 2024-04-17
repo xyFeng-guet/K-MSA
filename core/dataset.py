@@ -78,9 +78,7 @@ class MMDataset(Dataset):
 
         text_length, audio_length, video_length = self.args.seq_lens
 
-        audio_length, video_length = [50, 50]
         self.vision = Truncated(self.vision, video_length)
-        # self.text = Truncated(self.text, text_length)
         self.audio = Truncated(self.audio, audio_length)
 
     def __len__(self):

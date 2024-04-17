@@ -5,36 +5,46 @@
 
 import torch
 from torch import nn
-from .almt_layer import Transformer, CrossTransformer
+from .Transformer_layer import Transformer, CrossTransformer
 from .bert import BertTextEncoder
 
 
 class KMSA(nn.Module):
-    def __init__(self, dataset, AHL_depth=3, fusion_layer_depth=2, bert_pretrained='bert-base-uncased'):
+    def __init__(self, dataset, bert_pretrained='bert-base-uncased'):
         super(KMSA, self).__init__()
         self.bertmodel = BertTextEncoder(use_finetune=True, pretrained=bert_pretrained)
 
+        # Input Dimension Align
         if dataset == 'mosi':
-            self.proj_l0 = nn.Linear(768, 128)
-            self.proj_a0 = nn.Linear(5, 128)
-            self.proj_v0 = nn.Linear(20, 128)
+            self.dim_align_t = nn.Linear(768, 128)
+            self.dim_align_a = nn.Linear(5, 128)
+            self.dim_align_v = nn.Linear(20, 128)
         elif dataset == 'mosei':
-            self.proj_l0 = nn.Linear(768, 128)
-            self.proj_a0 = nn.Linear(74, 128)
-            self.proj_v0 = nn.Linear(35, 128)
+            self.dim_align_t = nn.Linear(768, 128)
+            self.dim_align_a = nn.Linear(74, 128)
+            self.dim_align_v = nn.Linear(35, 128)
         elif dataset == 'sims':
-            self.proj_l0 = nn.Linear(768, 128)
-            self.proj_a0 = nn.Linear(33, 128)
-            self.proj_v0 = nn.Linear(709, 128)
+            self.dim_align_t = nn.Linear(768, 128)
+            self.dim_align_a = nn.Linear(33, 128)
+            self.dim_align_v = nn.Linear(709, 128)
         else:
             assert False, "DatasetName must be mosi, mosei or sims."
 
-        self.proj_l = Transformer(num_frames=50, save_hidden=False, token_len=8, dim=128, depth=1, heads=8, mlp_dim=128)
-        self.proj_a = Transformer(num_frames=50, save_hidden=False, token_len=8, dim=128, depth=1, heads=8, mlp_dim=128)
-        self.proj_v = Transformer(num_frames=50, save_hidden=False, token_len=8, dim=128, depth=1, heads=8, mlp_dim=128)
+        # Length Align (Learning Context Information)
+        self.len_align_t = nn.Linear(50, 50, bias=True)
+        self.len_align_a = nn.Linear(300, 50, bias=True)
+        self.len_align_v = nn.Linear(300, 50, bias=True)
 
-        # self.text_encoder = Transformer(num_frames=8, save_hidden=True, token_len=None, dim=128, depth=AHL_depth-1, heads=8, mlp_dim=128)
-        # self.h_hyper_layer = HhyperLearningEncoder(dim=128, depth=AHL_depth, heads=8, dim_head=16, dropout=0.)
+        # All Encoders of Each Modality
+        self.proj_l = Transformer(num_frames=50, dim=128, depth=1, heads=8, mlp_dim=128)
+        self.proj_a = Transformer(num_frames=300, dim=128, depth=1, heads=8, mlp_dim=128)
+        self.proj_v = Transformer(num_frames=300, dim=128, depth=1, heads=8, mlp_dim=128)
+
+        # Representation Learning Sequence
+        self.rl_sequence_l = nn.Sequential(
+            self.dim_align_t,
+        )
+
         # self.fusion_layer = CrossTransformer(source_num_frames=8, tgt_num_frames=8, dim=128, depth=fusion_layer_depth, heads=8, mlp_dim=128)
         self.fusion_layer = nn.Sequential(
             nn.Linear(128 * 3, 128, bias=True),
@@ -47,14 +57,20 @@ class KMSA(nn.Module):
     def forward(self, x_visual, x_audio, x_text):
         x_text = self.bertmodel(x_text)
 
-        x_visual = self.proj_v0(x_visual)
-        x_audio = self.proj_a0(x_audio)
-        x_text = self.proj_l0(x_text)
+        # Dimension Align
+        x_visual = self.dim_align_v(x_visual)
+        x_audio = self.dim_align_a(x_audio)
+        x_text = self.dim_align_t(x_text)
 
         # Encoder Part
-        h_v = self.proj_v(x_visual)[:, :8]
-        h_a = self.proj_a(x_audio)[:, :8]
-        h_t = self.proj_l(x_text)[:, :8]
+        h_v = self.proj_v(x_visual)
+        h_a = self.proj_a(x_audio)
+        h_t = self.proj_l(x_text)
+
+        # Length Align
+        h_t = self.len_align_t(h_t.permute(0, 2, 1)).permute(0, 2, 1)
+        h_a = self.len_align_a(h_a.permute(0, 2, 1)).permute(0, 2, 1)
+        h_v = self.len_align_v(h_v.permute(0, 2, 1)).permute(0, 2, 1)
 
         # Adaptive Hyper-modality Learning
         # h_t_list = self.text_encoder(h_t)
@@ -82,6 +98,6 @@ def build_model(opt):
     else:
         l_pretrained = './bert-base-uncased'
 
-    model = KMSA(dataset=opt.datasetName, fusion_layer_depth=opt.fusion_layer_depth, bert_pretrained=l_pretrained)
+    model = KMSA(dataset=opt.datasetName, bert_pretrained=l_pretrained)
 
     return model
