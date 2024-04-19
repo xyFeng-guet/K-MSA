@@ -38,7 +38,7 @@ def parse_opts():
                  default=18,
                  type=int),
             dict(name='--batch_size',
-                 default=64,
+                 default=32,
                  type=int,
                  help=' '),
             dict(name='--lr',

@@ -120,10 +120,12 @@ def MMDataLoader(args):
         args.seq_lens = datasets['train'].get_seq_len()
 
     dataLoader = {
-        ds: DataLoader(datasets[ds],
-                       batch_size=args.batch_size,
-                       num_workers=args.num_workers,
-                       shuffle=True)
+        ds: DataLoader(
+            datasets[ds],
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            shuffle=True
+        )
         for ds in datasets.keys()
     }
 

@@ -1,9 +1,3 @@
-'''
-* @name: scheduler.py
-* @description: Warm up and cosine annealing functions.
-'''
-
-
 import torch
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.optim.lr_scheduler import ReduceLROnPlateau
