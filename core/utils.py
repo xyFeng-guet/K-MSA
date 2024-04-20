@@ -59,16 +59,17 @@ def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
 
 
-def save_model(save_path, epoch, model, optimizer):
+def save_model(save_path, result, model):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
-    save_file_path = os.path.join(save_path, 'epoch_{}.pth'.format(epoch))
-    states = {
-        'epoch': epoch + 1,
-        'state_dict': model.state_dict(),
-        'optimizer': optimizer.state_dict(),
-    }
-    torch.save(states, save_file_path)
+    save_file_path = os.path.join(
+        save_path,
+        'MAE-{}_Corr-{}.pth'.format(
+            result["MAE"],
+            result["Corr"]
+        )
+    )
+    torch.save(model.state_dict(), save_file_path)
 
 
 def save_print_results(opt, logger, train_re, valid_re, test_re):

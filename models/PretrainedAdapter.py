@@ -1,15 +1,12 @@
 import torch
 import torch.nn as nn
 from torch.nn import TransformerEncoder, TransformerEncoderLayer
-from transformers import BertModel, BertTokenizer
+from transformers import BertConfig, BertModel, BertTokenizer
 
 
 class FeatureProjector(nn.Module):
-    def __init__(self, input_dim, output_dim, num_layers=3, drop_out=0.1, name=None, config=default_config):
+    def __init__(self, input_dim, output_dim, num_layers=3, drop_out=0.1):
         super(FeatureProjector, self).__init__()
-        self.name = name
-        self.device = config.DEVICE
-
         self.feed_foward_size = int(output_dim / 2)
         self.project_size = output_dim - self.feed_foward_size
         self.proj1 = nn.Linear(input_dim, self.feed_foward_size, bias=True)
@@ -38,7 +35,7 @@ class FeatureProjector(nn.Module):
 
 
 class BaseClassifier(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size, drop_out=0.3):
+    def __init__(self, input_size, hidden_size, output_size, drop_out):
         super(BaseClassifier, self).__init__()
         ModuleList = []
         for i, h in enumerate(hidden_size):
@@ -51,6 +48,7 @@ class BaseClassifier(nn.Module):
         ModuleList.append(nn.Linear(hidden_size[-1], output_size))
 
         self.MLP = nn.Sequential(*ModuleList)
+        self.dropout = nn.Dropout(p=drop_out)
 
     def forward(self, x):
         x = self.MLP(x)
@@ -261,58 +259,60 @@ class AudioPretrain(nn.Module):
 
 
 class TextEncoder(nn.Module):
-    def __init__(self, name=None, fea_size=None, proj_fea_dim=None, drop_out=None, with_projector=True,
-                 config=default_config):
+    def __init__(self, pretrained, fea_size=None, proj_fea_dim=None):
         super(TextEncoder, self).__init__()
-        self.name = name
-        if fea_size is None:
-            fea_size = config.SIMS.downStream.text_fea_dim
-        if proj_fea_dim is None:
-            proj_fea_dim = config.SIMS.downStream.proj_fea_dim
-        if drop_out is None:
-            drop_out = config.SIMS.downStream.text_drop_out
-        self.tokenizer = BertTokenizer.from_pretrained('./bert-base-chinese')
-        self.extractor = BertModel.from_pretrained('./bert-base-chinese')
-        self.with_projector = with_projector
-        if with_projector:
-            self.projector = FeatureProjector(fea_size, proj_fea_dim, drop_out=drop_out,
-                                              name='text_projector', config=config)
-        self.device = config.DEVICE
+        self.model_config = BertConfig.from_pretrained(pretrained, output_hidden_states=True)
+        self.tokenizer = BertTokenizer.from_pretrained(pretrained, do_lower_case=True)
+        self.model = BertModel.from_pretrained(pretrained, config=self.model_config)
+        # self.projector = FeatureProjector(fea_size, proj_fea_dim)
 
-    def forward(self, text, device=None):
-        if device is None:
-            device = self.device
+    def forward(self, text):
+        input_ids, input_mask, segment_ids = text[:, 0, :].long(), text[:, 1, :].float(), text[:, 2, :].long()    # 更换原始文本，使用tokenizer
+        # x = self.model(**x)['pooler_output']
 
-        x = self.tokenizer(text, padding=True, truncation=True, max_length=256, return_tensors="pt").to(
-            device)
-        x = self.extractor(**x)['pooler_output']
-        if self.with_projector:
-            x = self.projector(x)
-        return x
+        last_hidden_states = self.model(
+            input_ids=input_ids,
+            attention_mask=input_mask,
+            token_type_ids=segment_ids
+        )  # type: ignore # Models outputs are now tuples
+        hidden_text = last_hidden_states[0]
+        # hidden_text = self.projector(hidden_text)
+        return hidden_text
 
 
 class TextPretrain(nn.Module):
-    def __init__(self, name=None, proj_fea_dim=768, drop_out=None, config=default_config):
+    def __init__(self, proj_fea_dim, drop_out):
         super(TextPretrain, self).__init__()
-        if drop_out is None:
-            drop_out = config.SIMS.downStream.text_drop_out
-        self.encoder = TextEncoder(name=name, with_projector=False)  # bert output 768
-        self.classifier = BaseClassifier(input_size=proj_fea_dim,
-                                         hidden_size=[int(proj_fea_dim / 2), int(proj_fea_dim / 4),
-                                                      int(proj_fea_dim / 8)],
-                                         output_size=1, drop_out=drop_out, name='RegClassifier', )
-        self.device = config.DEVICE
-        self.criterion = torch.nn.MSELoss()
-        self.config = config
+        self.encoder = TextEncoder(
+            pretrained='./BERT/bert-base-chinese',
+            fea_size=768,
+            proj_fea_dim=proj_fea_dim
+        )
+        self.classifier = BaseClassifier(
+            input_size=proj_fea_dim,
+            hidden_size=[int(proj_fea_dim / 2), int(proj_fea_dim / 4), int(proj_fea_dim / 8)],
+            output_size=1,
+            drop_out=drop_out
+        )
 
-    def forward(self, text, label, return_loss=True, device=None):
-        if device is None:
-            device = self.device
-        x = self.encoder(text, device=device)
-        pred = self.classifier(x)
+    def forward(self, text):
+        bert_output = self.encoder(text)
+        pred = self.classifier(bert_output)
 
-        if return_loss:
-            loss = self.criterion(pred.squeeze(), label.squeeze())
-            return pred, x, loss
-        else:
-            return pred, x
+        return pred, bert_output
+
+
+def build_pretrained_model(modality):
+    if modality == 't':
+        pretrained_model = TextPretrain(
+            proj_fea_dim=768,
+            drop_out=0.1
+        )
+    elif modality == 'v':
+        pretrained_model = VisionPretrain()
+    elif modality == 'a':
+        pretrained_model = AudioPretrain()
+    else:
+        raise ValueError("modality must be in t, v, and a")
+
+    return pretrained_model

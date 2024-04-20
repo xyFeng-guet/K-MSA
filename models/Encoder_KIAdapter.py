@@ -11,7 +11,7 @@ class MixDomainAdapter(nn.Module):
 class UnimodalAdapter(nn.Module):
     def __init__(self, opt, dataset, bert_pretrained='bert-base-uncased'):
         super(UnimodalAdapter, self).__init__()
-        self.bertmodel = BertTextEncoder(use_finetune=True, pretrained=bert_pretrained)
+        self.bertmodel = BertTextEncoder(pretrained=bert_pretrained)
 
         # Input Dimension Align
         if dataset == 'mosi':

@@ -4,15 +4,13 @@ from tqdm import tqdm
 from core.dataset import MMDataLoader
 from core.scheduler import get_scheduler
 from core.utils import AverageMeter, setup_seed, save_model, save_print_results
-from models.PretrainedAdapter import buld
+from models.PretrainedAdapter import build_pretrained_model
 from core.metric import MetricsTop
 
 
 def parse_opts():
     parser = argparse.ArgumentParser(description='Pretrained Adapter')
 
-    parser.add_argument('--dataset', type=str, default='sims',
-                        help='dataset to use (default: mosei)')
     parser.add_argument('--save_path', type=str, default='./pretrained-model/SIMS/',
                         help='path for checkpointing')
     parser.add_argument('--seed', type=int, default=1111,
@@ -130,7 +128,7 @@ def main(modality):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     setup_seed(opt.seed)
 
-    model = build_pretrained_model(opt, modality).to(device)
+    model = build_pretrained_model(modality).to(device)
     dataLoader = MMDataLoader(opt)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -151,7 +149,7 @@ def main(modality):
         scheduler_warmup.step()
 
     # 保存单模态预训练模型
-    save_model(opt.save_path, model, test_results)
+    save_model(opt.save_path, test_results, model)
 
 
 if __name__ == '__main__':
