@@ -12,6 +12,7 @@ class KMSA(nn.Module):
 
         # Multimodal Fusion
         self.DyMultiFus = DyRoutTrans(opt)
+        # self.DyMultiFus = DynRT(text_encoder, vision_encoder, acoustic_encoder, opt)
 
         # Output Classification for Sentiment Analysis
         self.OutCLS = SentiCLS(opt)
