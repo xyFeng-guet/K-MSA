@@ -83,30 +83,6 @@ class MLP(nn.Module):
         return self.linear(self.fc(x))
 
 
-class cls_layer_img(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super(cls_layer_img, self).__init__()
-        self.proj_norm = LayerNorm(input_dim)
-        self.proj = nn.Linear(input_dim, output_dim)
-
-    def forward(self, lang_feat, img_feat):
-        proj_feat = self.proj_norm(img_feat)
-        proj_feat = self.proj(proj_feat)
-        return proj_feat
-
-
-class cls_layer_txt(nn.Module):
-    def __init__(self, input_dim, output_dim):
-        super(cls_layer_txt, self).__init__()
-        self.proj_norm = LayerNorm(input_dim)
-        self.proj = nn.Linear(input_dim, output_dim)
-
-    def forward(self, lang_feat, img_feat):
-        proj_feat = self.proj_norm(lang_feat)
-        proj_feat = self.proj(proj_feat)
-        return proj_feat
-
-
 class cls_layer_both(nn.Module):
     def __init__(self,  input_dim, output_dim):
         super(cls_layer_both, self).__init__()
@@ -496,48 +472,13 @@ class DynRT_E(nn.Module):
 class DynRT(torch.nn.Module):
     def __init__(self, bertl_text, vit, opt):
         super(DynRT, self).__init__()
-
-        self.bertl_text = bertl_text
         self.opt = opt
-        self.vit=vit
-        self.input1=opt["input1"]
-        self.input2=opt["input2"]
-        self.input3=opt["input3"]
-
         self.trar = model.TRAR.DynRT_E(opt)
-        self.sigm = torch.nn.Sigmoid()
-        self.classifier = torch.nn.Sequential(
-            torch.nn.Dropout(0.5),
-            torch.nn.Linear(opt["output_size"],2)
-        )
-
-    def vit_forward(self,x):
-        x = self.vit.patch_embed(x)
-        cls_token = self.vit.cls_token.expand(x.shape[0], -1, -1)  # stole cls_tokens impl from Phil Wang, thanks
-        x = torch.cat((cls_token, x), dim=1)
-        x = self.vit.pos_drop(x + self.vit.pos_embed)
-        x = self.vit.blocks(x)
-        x = self.vit.norm(x)
-        return x[:,1:]
 
     # forward propagate input
     def forward(self, input):
         # (bs, max_len, dim)
-        bert_embed_text = self.bertl_text.embeddings(input_ids = input[self.input1])
-        # (bs, max_len, dim)
-        # bert_text = self.bertl_text.encoder.layer[0](bert_embed_text)[0]
-        for i in range(self.opt["roberta_layer"]):
-            bert_text = self.bertl_text.encoder.layer[i](bert_embed_text)[0]
-            bert_embed_text = bert_text
-        # (bs, grid_num, dim)
-        img_feat = self.vit_forward(input[self.input2])
-
-        (out1, lang_emb, img_emb) = self.trar(img_feat, bert_embed_text,input[self.input3].unsqueeze(1).unsqueeze(2))
-
-        out = self.classifier(out1)
-        result = self.sigm(out)
-
-        del bert_embed_text, bert_text, img_feat, out1, out
+        (result, lang_emb, img_emb) = self.trar(img_feat, bert_embed_text,input[self.input3].unsqueeze(1).unsqueeze(2))
 
         return result, lang_emb, img_emb
 
@@ -555,8 +496,6 @@ class DyRoutTrans(nn.Module):
 class SentiCLS(nn.Module):
     def __init__(self, opt):
         super(SentiCLS, self).__init__()
-        # Multimodal Fusion and Classfication Module
-        # self.fusion_layer = CrossTransformer(source_num_frames=8, tgt_num_frames=8, dim=128, depth=fusion_layer_depth, heads=8, mlp_dim=128)
         self.fusion_layer = nn.Sequential(
             nn.Linear(128 * 3, 128, bias=True),
             nn.ReLU(),
