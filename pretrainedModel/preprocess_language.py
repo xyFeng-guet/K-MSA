@@ -15,8 +15,13 @@ class BaiDuFanyi:
         self.header = {'Content-Type': 'application/x-www-form-urlencoded'}
 
     def BdTrans(self, textDataset):
-        translateText = []
+        translateText = {
+            'ch': [],
+            'en': []
+        }
+
         for text in textDataset:
+            translateText['ch'].append(text)
             sign = self.appid + text + str(self.salt) + self.secretKey
             md = hashlib.md5()
             md.update(sign.encode(encoding='utf-8'))
@@ -31,12 +36,12 @@ class BaiDuFanyi:
             }
             response = requests.post(self.url, params=data, headers=self.header)    # 发送post请求
             text = response.json()  # 返回的为json格式用json接收数据
-            translateText.append(text['trans_result'][0]['dst'])
+            translateText['en'].append(text['trans_result'][0]['dst'])
 
         return translateText
 
 
-def ReadSaveData(do):
+def ReadSaveData(do, data):
     if do == 'read':
         with open('/opt/data/private/Project/Datasets/MSA_Datasets/SIMS/Processed/unaligned_39.pkl', 'rb') as f:
             data = pickle.load(f)
@@ -45,10 +50,11 @@ def ReadSaveData(do):
         for types in ['train', 'valid', 'test']:
             for text in data[types]['raw_text']:
                 rawText.append(text)
-
         return rawText
     else:
-        pass
+        with open('/opt/data/private/K-MSA/pretrained/pretrained_text.pkl', 'wb') as f:
+            pickle.dump(data, f)
+            f.close()
 
 
 if __name__ == '__main__':
@@ -56,8 +62,9 @@ if __name__ == '__main__':
     appSecret = 'q55okNouXDa0e8_qu95V'      # 公钥
     BaiduTranslate_test = BaiDuFanyi(appKey, appSecret)
 
-    Text_data = ReadSaveData('read')
+    Text_data = ReadSaveData('read', None)
 
     Results = BaiduTranslate_test.BdTrans(Text_data)      # 要翻译的词组
 
-    ReadSaveData('save')
+    ReadSaveData('save', Results)
+    print(Results)
