@@ -34,9 +34,9 @@ class FeatureProjector(nn.Module):
         return x
 
 
-class BaseClassifier(nn.Module):
+class Classifier(nn.Module):
     def __init__(self, input_size, hidden_size, output_size, drop_out):
-        super(BaseClassifier, self).__init__()
+        super(Classifier, self).__init__()
         ModuleList = []
         for i, h in enumerate(hidden_size):
             if i == 0:
@@ -51,22 +51,17 @@ class BaseClassifier(nn.Module):
         self.dropout = nn.Dropout(p=drop_out)
 
     def forward(self, x):
-        x = self.MLP(x)
-        return x
+        x = self.dropout(x)
+        x = x[:, 0, :]
+        output = self.MLP(x)
+        return output
 
 
 class PositionEncodingTraining(nn.Module):
     """Construct the CLS token, position and patch embeddings.
     """
-    def __init__(self, num_patches, fea_size=None, tf_hidden_dim=None, drop_out=None, config=default_config):
+    def __init__(self, num_patches, fea_size, tf_hidden_dim, drop_out):
         super().__init__()
-        if fea_size is None:
-            fea_size = config.SIMS.downStream.vision_fea_dim
-        if tf_hidden_dim is None:
-            tf_hidden_dim = config.SIMS.downStream.encoder_fea_dim
-        if drop_out is None:
-            drop_out = config.SIMS.downStream.vision_drop_out
-
         self.cls_token = nn.Parameter(torch.ones(1, 1, tf_hidden_dim))
         self.proj = nn.Linear(fea_size, tf_hidden_dim)
         self.position_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, tf_hidden_dim))
@@ -83,12 +78,17 @@ class PositionEncodingTraining(nn.Module):
 
 
 class TfEncoder(nn.Module):
-    def __init__(self, d_model, nhead, dim_feedforward, num_layers, dropout=0.2, activation='gelu'):
+    def __init__(self, fea_size, nhead, dim_feedforward, num_layers, dropout=0.2, activation='gelu'):
         super(TfEncoder, self).__init__()
         self.src_mask = None
-        self.pos_encoder = PositionEncodingTraining()
+        self.pos_encoder = PositionEncodingTraining(
+            num_patches=50,
+            fea_size=fea_size,
+            tf_hidden_dim=dim_feedforward,
+            drop_out=0.5
+        )
 
-        encoder_layers = TransformerEncoderLayer(d_model, nhead, dim_feedforward, dropout, activation=activation)
+        encoder_layers = TransformerEncoderLayer(dim_feedforward, nhead, dim_feedforward, dropout, activation=activation)
         self.transformer_encoder = TransformerEncoder(encoder_layers, num_layers)
 
     def _generate_square_subsequent_mask(self, sz):
@@ -114,148 +114,85 @@ class TfEncoder(nn.Module):
 
 
 class VisionEncoder(nn.Module):
-    def __init__(self, name=None, fea_size=None, encoder_fea_dim=None, nhead=None, dim_feedforward=None,
-                 num_layers=None,
-                 drop_out=0.5, config=default_config):
+    def __init__(self, fea_size, nhead, dim_feedforward, num_layers, drop_out):
         super(VisionEncoder, self).__init__()
-        self.name = name
-        if fea_size is None:
-            fea_size = config.SIMS.downStream.vision_fea_dim
-        if encoder_fea_dim is None:
-            encoder_fea_dim = config.SIMS.downStream.encoder_fea_dim
-        if nhead is None:
-            nhead = config.SIMS.downStream.vision_nhead
-        if drop_out is None:
-            drop_out = config.SIMS.downStream.vision_drop_out
-        if dim_feedforward is None:
-            dim_feedforward = config.SIMS.downStream.encoder_fea_dim
-        if num_layers is None:
-            num_layers = config.SIMS.downStream.vision_tf_num_layers
+        self.tfencoder = TfEncoder(
+            fea_size=fea_size,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            num_layers=num_layers,
+            dropout=drop_out,
+            activation='gelu'
+        )
+        self.layernorm = nn.LayerNorm(dim_feedforward)
 
-        self.fc = nn.Linear(fea_size, encoder_fea_dim)
-        self.encoder = TfEncoder(d_model=encoder_fea_dim, nhead=nhead, dim_feedforward=dim_feedforward,
-                                 num_layers=num_layers,
-                                 dropout=drop_out, activation='gelu',
-                                 config=config)
-
-        self.device = config.DEVICE
-        self.encoder.device = self.device
-        self.activation = nn.Tanh()
-        self.cls_embedding = nn.Parameter()
-        self.layernorm = nn.LayerNorm(encoder_fea_dim)
-        self.dense = nn.Linear(encoder_fea_dim, encoder_fea_dim)
-
-    def forward(self, vision, key_padding_mask, device=None):
-        if device is None:
-            device = self.device
-
-        x = self.encoder(vision, has_mask=False, src_key_padding_mask=key_padding_mask)
+    def forward(self, vision, key_padding_mask):
+        x = self.tfencoder(vision, has_mask=False, src_key_padding_mask=key_padding_mask)
         x = self.layernorm(x)
         x = torch.mean(x, dim=-2, keepdim=True)
-
         return x
 
 
 class VisionPretrain(nn.Module):
-    def __init__(self, name=None, encoder_fea_dim=None, drop_out=None, config=default_config):
+    def __init__(self, proj_fea_dim, drop_out):
         super(VisionPretrain, self).__init__()
-        if encoder_fea_dim is None:
-            encoder_fea_dim = config.SIMS.downStream.encoder_fea_dim
-        if drop_out is None:
-            drop_out = config.SIMS.downStream.text_drop_out
-        self.encoder = VisionEncoder(name=name)
-        self.classifier = BaseClassifier(input_size=encoder_fea_dim,
-                                         hidden_size=[int(encoder_fea_dim / 2), int(encoder_fea_dim / 4),
-                                                      int(encoder_fea_dim / 8)],
-                                         output_size=1, drop_out=drop_out, name='VisionRegClassifier', )
-        self.device = config.DEVICE
-        self.criterion = torch.nn.MSELoss()
-        self.config = config
+        self.encoder = VisionEncoder(
+            fea_size=709,
+            nhead=8,
+            dim_feedforward=1024,
+            num_layers=4,
+            drop_out=0.5
+        )
+        self.classifier = Classifier(
+            input_size=proj_fea_dim,
+            hidden_size=[int(proj_fea_dim / 2), int(proj_fea_dim / 4), int(proj_fea_dim / 8)],
+            output_size=1,
+            drop_out=drop_out
+        )
 
-    def forward(self, vision, label, key_padding_mask, return_loss=True, device=None):
-        if device is None:
-            device = self.device
-        x = self.encoder(vision, key_padding_mask, device=device)
+    def forward(self, img, audio, text):
+        x = self.encoder(img, None)
         pred = self.classifier(x).squeeze()
-
-        if return_loss:
-            loss = self.criterion(pred.squeeze(), label.squeeze())
-            return pred, x, loss
-        else:
-            return pred, x
+        return pred, x
 
 
 class AudioEncoder(nn.Module):
-    def __init__(self, name=None, fea_size=None, encoder_fea_dim=None, nhead=None, dim_feedforward=None,
-                 num_layers=None,
-                 drop_out=0.5, config=default_config):
+    def __init__(self, fea_size, encoder_fea_dim, nhead, dim_feedforward, num_layers, drop_out=0.5):
         super(AudioEncoder, self).__init__()
-        self.name = name
-        if fea_size is None:
-            fea_size = config.SIMS.downStream.audio_fea_dim
-        if encoder_fea_dim is None:
-            encoder_fea_dim = config.SIMS.downStream.encoder_fea_dim
-        if nhead is None:
-            nhead = config.SIMS.downStream.audio_nhead
-        if drop_out is None:
-            drop_out = config.SIMS.downStream.audio_drop_out
-        if dim_feedforward is None:
-            dim_feedforward = config.SIMS.downStream.encoder_fea_dim
-        if num_layers is None:
-            num_layers = config.SIMS.downStream.audio_tf_num_layers
-
         self.fc = nn.Linear(fea_size, encoder_fea_dim)
-        self.encoder = TfEncoder(d_model=encoder_fea_dim, nhead=nhead, dim_feedforward=dim_feedforward,
-                                 num_layers=num_layers,
-                                 dropout=drop_out, activation='gelu',
-                                 config=config)
-
-        self.device = config.DEVICE
-        self.encoder.device = self.device
-        self.activation = nn.Tanh()
         self.cls_embedding = nn.Parameter()
+        self.encoder = TfEncoder(
+            d_model=encoder_fea_dim,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            num_layers=num_layers,
+            dropout=drop_out,
+            activation='gelu'
+        )
         self.layernorm = nn.LayerNorm(encoder_fea_dim)
-        self.dense = nn.Linear(encoder_fea_dim, encoder_fea_dim)
-        # self.fc = nn.Linear(709,768)
 
-    def forward(self, audio, key_padding_mask, device=None):
-        if device is None:
-            device = self.device
-
+    def forward(self, audio, key_padding_mask):
         x = self.encoder(audio, has_mask=False, src_key_padding_mask=key_padding_mask)
         x = self.layernorm(x)
         x = torch.mean(x, dim=-2, keepdim=True)
-
         return x
 
 
 class AudioPretrain(nn.Module):
-    def __init__(self, name=None, encoder_fea_dim=None, drop_out=None, config=default_config):
+    def __init__(self, encoder_fea_dim, drop_out):
         super(AudioPretrain, self).__init__()
-        if encoder_fea_dim is None:
-            encoder_fea_dim = config.SIMS.downStream.encoder_fea_dim
-        if drop_out is None:
-            drop_out = config.SIMS.downStream.text_drop_out
-        self.encoder = AudioEncoder(name=name)
-        self.classifier = BaseClassifier(input_size=encoder_fea_dim,
-                                         hidden_size=[int(encoder_fea_dim / 2), int(encoder_fea_dim / 4),
-                                                      int(encoder_fea_dim / 8)],
-                                         output_size=1, drop_out=drop_out, name='AudioRegClassifier', )
-        self.device = config.DEVICE
-        self.criterion = torch.nn.MSELoss()
-        self.config = config
+        self.encoder = AudioEncoder()
+        self.classifier = Classifier(
+            input_size=encoder_fea_dim,
+            hidden_size=[int(encoder_fea_dim / 2), int(encoder_fea_dim / 4), int(encoder_fea_dim / 8)],
+            output_size=1,
+            drop_out=drop_out
+        )
 
-    def forward(self, audio, label, key_padding_mask, return_loss=True, device=None):
-        if device is None:
-            device = self.device
-        x = self.encoder(audio, key_padding_mask, device=device)
+    def forward(self, audio, key_padding_mask):
+        x = self.encoder(audio, key_padding_mask)
         pred = self.classifier(x).squeeze()
-
-        if return_loss:
-            loss = self.criterion(pred.squeeze(), label.squeeze())
-            return pred, x, loss
-        else:
-            return pred, x
+        return pred, x
 
 
 class TextEncoder(nn.Module):
@@ -288,30 +225,36 @@ class TextPretrain(nn.Module):
             fea_size=768,
             proj_fea_dim=proj_fea_dim
         )
-        self.classifier = BaseClassifier(
+        self.classifier = Classifier(
             input_size=proj_fea_dim,
             hidden_size=[int(proj_fea_dim / 2), int(proj_fea_dim / 4), int(proj_fea_dim / 8)],
             output_size=1,
             drop_out=drop_out
         )
 
-    def forward(self, text):
+    def forward(self, img, audio, text):
         bert_output = self.encoder(text)
         pred = self.classifier(bert_output)
 
-        return pred, bert_output
+        return pred
 
 
 def build_pretrained_model(modality):
-    if modality == 't':
+    if modality == 'T':
         pretrained_model = TextPretrain(
             proj_fea_dim=768,
             drop_out=0.1
         )
-    elif modality == 'v':
-        pretrained_model = VisionPretrain()
-    elif modality == 'a':
-        pretrained_model = AudioPretrain()
+    elif modality == 'V':
+        pretrained_model = VisionPretrain(
+            proj_fea_dim=1024,
+            drop_out=0.1
+        )
+    # elif modality == 'A':
+    #     pretrained_model = AudioPretrain(
+    #         proj_fea_dim=512,
+    #         drop_out=0.1
+    #     )
     else:
         raise ValueError("modality must be in t, v, and a")
 

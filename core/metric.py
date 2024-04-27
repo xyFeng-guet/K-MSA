@@ -9,7 +9,8 @@ class MetricsTop():
         self.metrics_dict = {
             'MOSI': self.__eval_mosi_regression,
             'MOSEI': self.__eval_mosei_regression,
-            'SIMS': self.__eval_sims_regression
+            'SIMS': self.__eval_sims_regression,
+            'EXTERNAL_KNOWLEDGE': self.__eval_external_knowledge_regression
         }
 
     def __multiclass_acc(self, y_pred, y_true):
@@ -114,6 +115,9 @@ class MetricsTop():
             "Corr": round(corr, 4)
         }
         return eval_results
+
+    def __eval_external_knowledge_regression(self, y_pred, y_true):
+        return self.__eval_sims_regression(y_pred, y_true)
 
     def getMetics(self, datasetName):
         return self.metrics_dict[datasetName.upper()]

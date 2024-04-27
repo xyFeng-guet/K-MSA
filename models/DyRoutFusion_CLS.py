@@ -1,49 +1,7 @@
-import numpy as np
+import math
 import torch
 from torch import nn
 import torch.nn.functional as F
-
-
-# --------------------------------
-# ---- img Local Window Generator ----
-# --------------------------------
-def getImgMasks(scale=16, order=2):
-    """
-    :param scale: Feature Map Scale
-    :param order: Local Window Size, e.g., order=2 equals to windows size (5, 5)
-    :return: masks = (scale**2, scale**2)
-    """
-    masks = []
-    _scale = scale
-    assert order < _scale, 'order size be smaller than feature map scale'
-
-    for i in range(_scale):
-        for j in range(_scale):
-            mask = np.ones([_scale, _scale], dtype=np.float32)
-            for x in range(i - order, i + order + 1, 1):
-                for y in range(j - order, j + order + 1, 1):
-                    if (0 <= x < _scale) and (0 <= y < _scale):
-                        mask[x][y] = 0
-            mask = np.reshape(mask, [_scale * _scale])
-            masks.append(mask)
-    masks = np.array(masks)
-    masks = np.asarray(masks, dtype=np.bool) # 0, 1 -> False True (True mask)
-    return masks
-
-
-def getMasks_img_multimodal(x_mask, __C):
-    mask_list = [] # x_mask [64, 1, 1, 49]
-    ORDERS = __C["ORDERS"]
-    for order in ORDERS:
-        if order == 0:
-            mask_list.append(x_mask)
-        else:
-            mask_img = torch.from_numpy(getImgMasks(__C["IMG_SCALE"], order)).byte().to(x_mask.device) # (49, 49)
-            mask = torch.cat([mask_img]*(__C["len"]//(__C["IMG_SCALE"]*__C["IMG_SCALE"])), dim=0) 
-            mask = torch.cat([mask, mask_img[:(__C["len"]%(__C["IMG_SCALE"]*__C["IMG_SCALE"])),:]])
-            mask = torch.logical_or(x_mask, mask) # (64, 1, max_len, grid_num)
-            mask_list.append(mask)
-    return mask_list
 
 
 class LayerNorm(nn.Module):
@@ -57,43 +15,6 @@ class LayerNorm(nn.Module):
         mean = x.mean(-1, keepdim=True)
         std = x.std(-1, keepdim=True)
         return self.a * (x - mean) / (std + self.eps) + self.b
-
-
-class FC(nn.Module):
-    def __init__(self, input_dim, output_dim, dropout=0):
-        super(FC, self).__init__()
-        self.linear = nn.Linear(input_dim, output_dim)
-        self.activation = nn.ReLU(inplace=True)
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, x):
-        x = self.linear(x)
-        x = self.activation(x)
-        x = self.dropout(x)
-        return x
-
-
-class MLP(nn.Module):
-    def __init__(self, input_dim, hidden_dim, output_dim, dropout=0):
-        super(MLP, self).__init__()
-        self.fc = FC(input_dim, hidden_dim, dropout=dropout)
-        self.linear = nn.Linear(hidden_dim, output_dim)
-
-    def forward(self, x):
-        return self.linear(self.fc(x))
-
-
-class cls_layer_both(nn.Module):
-    def __init__(self,  input_dim, output_dim):
-        super(cls_layer_both, self).__init__()
-        self.proj_norm = LayerNorm(input_dim)
-        self.proj = nn.Linear(input_dim, output_dim)
-
-    def forward(self, lang_feat, img_feat):
-        proj_feat = lang_feat + img_feat
-        proj_feat = self.proj_norm(proj_feat)
-        proj_feat = self.proj(proj_feat)
-        return proj_feat
 
 
 class SoftRoutingBlock(nn.Module):
@@ -119,14 +40,14 @@ class SoftRoutingBlock(nn.Module):
             logits = self.mlp(x.squeeze(-1))
         elif self.pooling == 'fc':
             b, _, c = x.size()
-            mask = self.make_mask(x).squeeze(1).squeeze(1).unsqueeze(2) # (8, 1, 1, 49) -> (8, 49, 1)
-            scores = self.pool(x) # (8, 49, 1)
+            mask = self.make_mask(x).squeeze(1).squeeze(1).unsqueeze(2)     # (8, 1, 1, 49) -> (8, 49, 1)
+            scores = self.pool(x)       # (8, 49, 1)
             scores = scores.masked_fill(mask, -1e9)
             scores = F.softmax(scores, dim=1)
             _x = x.mul(scores)
             x = torch.sum(_x, dim=1)
             logits = self.mlp(x)
-            
+
         alpha = F.softmax(logits, dim=-1)  #
         return alpha
 
@@ -191,14 +112,13 @@ class mean_Block(nn.Module):
     """
     Self-Attention Routing Block
     """
-
     def __init__(self, hidden_size, orders):
         super(mean_Block, self).__init__()
         self.len = orders
         self.hidden_size = hidden_size
 
     def forward(self, x, tau, masks):
-        alpha = (1 / self.len) * torch.ones(x.shape[0], self.len).to(x.device)# (bs, 4)
+        alpha = (1 / self.len) * torch.ones(x.shape[0], self.len).to(x.device)      # (bs, 4)
         return alpha
 
 
@@ -206,7 +126,6 @@ class SARoutingBlock(nn.Module):
     """
     Self-Attention Routing Block
     """
-
     def __init__(self, opt):
         super(SARoutingBlock, self).__init__()
         self.opt = opt
@@ -228,7 +147,7 @@ class SARoutingBlock(nn.Module):
         n_batches = q.size(0)
         x = v
 
-        alphas = self.routing_block(x, tau, masks) # (bs, 4)
+        alphas = self.routing_block(x, tau, masks)      # (bs, 4)
 
         if self.opt["BINARIZE"]:
             if not training:
@@ -239,34 +158,34 @@ class SARoutingBlock(nn.Module):
             -1,
             self.opt["multihead"],
             int(self.opt["hidden_size"] / self.opt["multihead"])
-        ).transpose(1, 2) # (bs, 4, 49, 192)
+        ).transpose(1, 2)       # (bs, 4, 49, 192)
 
         k = self.linear_k(k).view(
             n_batches,
             -1,
             self.opt["multihead"],
             int(self.opt["hidden_size"] / self.opt["multihead"])
-        ).transpose(1, 2) # (bs, 4, 49, 192)
+        ).transpose(1, 2)       # (bs, 4, 49, 192)
 
         q = self.linear_q(q).view(
             n_batches,
             -1,
             self.opt["multihead"],
             int(self.opt["hidden_size"] / self.opt["multihead"])
-        ).transpose(1, 2) # (bs, 4, 49, 192)
+        ).transpose(1, 2)       # (bs, 4, 49, 192)
 
-        att_list = self.routing_att(v, k, q, masks) # (bs, order_num, head_num, grid_num, grid_num) (bs, 4, 4, 49, 49)
-        att_map = torch.einsum('bl,blcnm->bcnm', alphas, att_list) # (bs, 4), (bs, 4, 4, 49, 49) - > (bs, 4, 49, 49)
+        att_list = self.routing_att(v, k, q, masks)     # (bs, order_num, head_num, grid_num, grid_num) (bs, 4, 4, 49, 49)
+        att_map = torch.einsum('bl,blcnm->bcnm', alphas, att_list)      # (bs, 4), (bs, 4, 4, 49, 49) - > (bs, 4, 49, 49)
 
-        atted = torch.matmul(att_map, v) # (bs, 4, 49, [49]) * (bs, 4, [49],192) - > (bs, 4, 49, 192) mul [49, 49]*[49, 192], 
+        atted = torch.matmul(att_map, v)        # (bs, 4, 49, [49]) * (bs, 4, [49],192) - > (bs, 4, 49, 192) mul [49, 49]*[49, 192]
 
         atted = atted.transpose(1, 2).contiguous().view(
             n_batches,
             -1,
             self.opt["hidden_size"]
-        ) # (bs, 49, 768)
+        )       # (bs, 49, 768)
 
-        atted = self.linear_merge(atted) # (bs, 4, 768)
+        atted = self.linear_merge(atted)        # (bs, 4, 768)
 
         return atted
 
@@ -296,28 +215,20 @@ class SARoutingBlock(nn.Module):
         return out
 
 
-# ---------------------------
-# ---- Feed Forward Nets ----
-# ---------------------------
 class FFN(nn.Module):
     def __init__(self, opt):
         super(FFN, self).__init__()
-
-        self.mlp = MLP(
-            input_dim=opt["hidden_size"],
-            hidden_dim=opt["ffn_size"],
-            output_dim=opt["hidden_size"],
-            dropout=opt["dropout"],
-            activation="ReLU"
+        self.fc = nn.Sequential(
+            nn.Linear(opt["hidden_size"], opt["hidden_size"]),
+            nn.ReLU(inplace=True),
+            nn.Dropout(opt["dropout"])
         )
+        self.linear = nn.Linear(opt["ffn_size"], opt["hidden_size"])
 
     def forward(self, x):
-        return self.mlp(x)
+        return self.linear(self.fc(x))
 
 
-# ------------------------------
-# ---- Multi-Head Attention ----
-# ------------------------------
 class MHAtt(nn.Module):
     def __init__(self, opt):
         super(MHAtt, self).__init__()
@@ -383,7 +294,6 @@ class MHAtt(nn.Module):
 class multiTRAR_SA_block(nn.Module):
     def __init__(self, opt):
         super(multiTRAR_SA_block, self).__init__()
-
         self.mhatt1 = SARoutingBlock(opt)
         self.mhatt2 = MHAtt(opt)
         self.ffn = FFN(opt)
@@ -397,26 +307,16 @@ class multiTRAR_SA_block(nn.Module):
         self.dropout3 = nn.Dropout(opt["dropout"])
         self.norm3 = LayerNorm(opt["hidden_size"])
 
-    def forward(self, x, y, y_masks, x_mask, tau, training): # x (64, 49, 512) y
-
-        x = self.norm1(x + self.dropout1(
-            self.mhatt1(v=y, k=y, q=x, masks=y_masks, tau=tau, training=training)
-        )) # (64, 49, 512) # (bs, 49, 768)
-
-        x = self.norm2(x + self.dropout2(
-            self.mhatt2(v=x, k=x, q=x, mask=x_mask)
-        ))
-
-        x = self.norm3(x + self.dropout3(
-            self.ffn(x)
-        ))
-
+    def forward(self, x, y, x_mask, y_masks, tau, training):
+        x = self.norm1(x + self.dropout1(self.mhatt1(v=y, k=y, q=x, masks=y_masks, tau=tau, training=training)))
+        x = self.norm2(x + self.dropout2(self.mhatt2(v=x, k=x, q=x, mask=x_mask)))
+        x = self.norm3(x + self.dropout3(self.ffn(x)))
         return x
 
 
-class DynRT_ED(nn.Module):
+class DynRT_E(nn.Module):
     def __init__(self, opt):
-        super(DynRT_ED, self).__init__()
+        super(DynRT_E, self).__init__()
         self.opt = opt
         self.tau = opt["tau_max"]
         opt_list = []
@@ -433,64 +333,39 @@ class DynRT_ED(nn.Module):
         # Input encoder last hidden vector
         # And obtain decoder last hidden vectors
         for i, dec in enumerate(self.dec_list):
-            y = dec(y, x, x_masks[:i+1], y_mask, self.tau, self.training) # (4, 360, 768)
+            y = dec(x, y, x_masks[:i+1], y_mask, self.tau, self.training)   # (4, 360, 768)
         return y, x
 
     def set_tau(self, tau):
         self.tau = tau
 
 
-class DynRT_E(nn.Module):
+class DyRoutTrans(nn.Module):
     def __init__(self, opt):
-        super(DynRT_E, self).__init__()
-        self.backbone = DynRT_ED(opt)
-        if opt["classifier"] == 'both':
-            self.cls_layer = cls_layer_both(opt["hidden_size"],opt["output_size"])
-        elif opt["classifier"] == 'text':
-            self.cls_layer = cls_layer_txt(opt["hidden_size"],opt["output_size"])
-        elif opt["classifier"] == 'img':
-            self.cls_layer = cls_layer_img(opt["hidden_size"],opt["output_size"])
+        super(DyRoutTrans, self).__init__()
+        self.opt = opt
+        self.multifuse = DynRT_E(opt)
+        self.cls_layer = nn.Sequential(
+            LayerNorm(opt["hidden_size"]),
+            nn.Linear(opt["hidden_size"], opt["output_size"])
+        )
+        # self.fusion_layer = CrossTransformer(source_num_frames=8, tgt_num_frames=8, dim=128, depth=fusion_layer_depth, heads=8, mlp_dim=128)
 
-    def forward(self, img_feat, lang_feat, lang_feat_mask):
-        img_feat_mask = torch.zeros([img_feat.shape[0],1,1,img_feat.shape[1]],dtype=torch.bool,device=img_feat.device)
-        # (bs, 1, 1, grid_num)
-        lang_feat, img_feat = self.backbone(
+    def forward(self, lang_feat, img_feat, inputs, unimodal_senti):
+        lang_feat_mask = inputs[self.input3].unsqueeze(1).unsqueeze(2)
+        img_feat_mask = torch.zeros([img_feat.shape[0], 1, 1, img_feat.shape[1]], dtype=torch.bool, device=img_feat.device)     # (bs, 1, 1, grid_num)
+        lang_feat, img_feat = self.multifuse(
             lang_feat,
             img_feat,
             lang_feat_mask,
             img_feat_mask
         )
 
-        lang_feat = torch.mean(lang_feat, dim=1)
-        img_feat = torch.mean(img_feat, dim=1)
+        lang_emb = torch.mean(lang_feat, dim=1)
+        img_emb = torch.mean(img_feat, dim=1)
+        result = self.cls_layer(lang_emb + img_emb)
 
-        proj_feat = self.cls_layer(lang_feat, img_feat)
-
-        return proj_feat, lang_feat, img_feat
-
-
-class DynRT(torch.nn.Module):
-    def __init__(self, bertl_text, vit, opt):
-        super(DynRT, self).__init__()
-        self.opt = opt
-        self.trar = model.TRAR.DynRT_E(opt)
-
-    # forward propagate input
-    def forward(self, input):
-        # (bs, max_len, dim)
-        (result, lang_emb, img_emb) = self.trar(img_feat, bert_embed_text,input[self.input3].unsqueeze(1).unsqueeze(2))
-
-        return result, lang_emb, img_emb
-
-
-class DyRoutTrans(nn.Module):
-    def __init__(self, opt):
-        super(DyRoutTrans, self).__init__()
-        # Multimodal Fusion and Classfication Module
-        # self.fusion_layer = CrossTransformer(source_num_frames=8, tgt_num_frames=8, dim=128, depth=fusion_layer_depth, heads=8, mlp_dim=128)
-
-    def forward(self, unimodal_features, unimodal_senti):
-        return unimodal_features
+        return lang_emb, img_emb, result
 
 
 class SentiCLS(nn.Module):

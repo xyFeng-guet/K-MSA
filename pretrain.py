@@ -11,16 +11,36 @@ from core.metric import MetricsTop
 def parse_opts():
     parser = argparse.ArgumentParser(description='Pretrained Adapter')
 
-    parser.add_argument('--save_path', type=str, default='./pretrained-model/SIMS/',
+    parser.add_argument('--datasetName', type=str, default='external_knowledge',
+                        help='select external knowledge base for pre-training')
+    parser.add_argument('--train_mode', type=str, default='regression',
+                        help='type of pre-training labels')
+
+    parser.add_argument('--dataPath', type=str, default='/opt/data/private/Project/Datasets/MSA_Datasets/SIMS/Processed/unaligned_39.pkl',
                         help='path for checkpointing')
-    parser.add_argument('--seed', type=int, default=1111,
+    parser.add_argument('--savePath', type=str, default='./pretrainedModel/',
+                        help='path for checkpointing')
+
+    parser.add_argument('--seed', type=int, default=111,
                         help='random seed')
+    parser.add_argument('--batch_size', type=int, default=32,
+                        help='')
+    parser.add_argument('--n_epochs', type=int, default=50,
+                        help='epoch number for training')
+    parser.add_argument('--num_workers', type=int, default=8,
+                        help='')
+    parser.add_argument('--seq_lens', type=list, default=[50, 50, 200],
+                        help='features length of each modality for pre-training')
+    parser.add_argument('--lr', type=int, default=1e-4,
+                        help='learning rate')
+    parser.add_argument('--weight_decay', type=int, default=1e-4,
+                        help='learning rate')
 
     args = parser.parse_args()
     return args
 
 
-def train(model, device, train_loader, optimizer, loss_fn, epoch, metrics):
+def train(modality, model, device, train_loader, optimizer, loss_fn, epoch, metrics):
     train_pbar = tqdm(train_loader)
     losses = AverageMeter()
     y_pred, y_true = [], []
@@ -28,7 +48,7 @@ def train(model, device, train_loader, optimizer, loss_fn, epoch, metrics):
     model.train()
     for data in train_pbar:
         img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
-        label = data['labels']['M'].to(device)
+        label = data['labels'][modality].to(device)
         label = label.view(-1, 1)
         batchsize = img.shape[0]
 
@@ -57,7 +77,7 @@ def train(model, device, train_loader, optimizer, loss_fn, epoch, metrics):
     return train_results
 
 
-def evaluate(model, device, eval_loader, optimizer, loss_fn, epoch, metrics):
+def evaluate(modality, model, device, eval_loader, optimizer, loss_fn, epoch, metrics):
     test_pbar = tqdm(eval_loader)
     losses = AverageMeter()
     y_pred, y_true = [], []
@@ -66,7 +86,7 @@ def evaluate(model, device, eval_loader, optimizer, loss_fn, epoch, metrics):
     with torch.no_grad():
         for data in test_pbar:
             img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
-            label = data['labels']['M'].to(device)
+            label = data['labels'][modality].to(device)
             label = label.view(-1, 1)
             batchsize = img.shape[0]
 
@@ -90,7 +110,7 @@ def evaluate(model, device, eval_loader, optimizer, loss_fn, epoch, metrics):
     return valid_results
 
 
-def test(model, device, test_loader, optimizer, loss_fn, epoch, metrics):
+def test(modality, model, device, test_loader, optimizer, loss_fn, epoch, metrics):
     test_pbar = tqdm(test_loader)
     losses = AverageMeter()
     y_pred, y_true = [], []
@@ -99,7 +119,7 @@ def test(model, device, test_loader, optimizer, loss_fn, epoch, metrics):
     with torch.no_grad():
         for data in test_pbar:
             img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
-            label = data['labels']['M'].to(device)
+            label = data['labels'][modality].to(device)
             label = label.view(-1, 1)
             batchsize = img.shape[0]
 
@@ -141,17 +161,17 @@ def main(modality):
     scheduler_warmup = get_scheduler(optimizer, opt)
 
     for epoch in range(1, opt.n_epochs+1):
-        train_results = train(model, device, dataLoader['train'], optimizer, loss_fn, epoch, metrics)
-        valid_results = evaluate(model, device, dataLoader['valid'], optimizer, loss_fn, epoch, metrics)
-        test_results = test(model, device, dataLoader['test'], optimizer, loss_fn, epoch, metrics)
+        train_results = train(modality, model, device, dataLoader['train'], optimizer, loss_fn, epoch, metrics)
+        valid_results = evaluate(modality, model, device, dataLoader['valid'], optimizer, loss_fn, epoch, metrics)
+        test_results = test(modality, model, device, dataLoader['test'], optimizer, loss_fn, epoch, metrics)
 
         save_print_results(opt, None, train_results, valid_results, test_results)
         scheduler_warmup.step()
 
     # 保存单模态预训练模型
-    save_model(opt.save_path, test_results, model)
+    save_model(opt.savePath, test_results, modality, model)
 
 
 if __name__ == '__main__':
-    for m in ["t", "v", "a"]:
+    for m in ["V"]:     # , "T", "A"
         main(modality=m)

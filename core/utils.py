@@ -59,12 +59,13 @@ def setup_seed(seed):
     torch.backends.cudnn.deterministic = True
 
 
-def save_model(save_path, result, model):
+def save_model(save_path, result, modality, model):
     if not os.path.exists(save_path):
         os.makedirs(save_path)
     save_file_path = os.path.join(
         save_path,
-        'MAE-{}_Corr-{}.pth'.format(
+        '{}_MAE-{}_Corr-{}.pth'.format(
+            modality,
             result["MAE"],
             result["Corr"]
         )
@@ -73,7 +74,7 @@ def save_model(save_path, result, model):
 
 
 def save_print_results(opt, logger, train_re, valid_re, test_re):
-    if opt.datasetName != 'sims':
+    if opt.datasetName in ['mosi', 'mosei']:
         results = [
             ["Train", train_re["MAE"], train_re["Corr"], train_re["Mult_acc_7"], train_re["Has0_acc_2"], train_re["Non0_acc_2"], train_re["Has0_F1_score"], train_re["Non0_F1_score"]],
             ["Valid", valid_re["MAE"], valid_re["Corr"], valid_re["Mult_acc_7"], valid_re["Has0_acc_2"], valid_re["Non0_acc_2"], valid_re["Has0_F1_score"], valid_re["Non0_F1_score"]],
@@ -92,4 +93,7 @@ def save_print_results(opt, logger, train_re, valid_re, test_re):
         headers = ["Phase", "MAE", "Corr", "Acc-2", "Acc-3", "Acc-5", "F1"]
 
         table = '\n' + tabulate(results, headers, tablefmt="grid") + '\n'
-        logger.info(table.replace('\n', '\n\n'))
+        if logger is not None:
+            logger.info(table.replace('\n', '\n\n'))
+        else:
+            print(table)
