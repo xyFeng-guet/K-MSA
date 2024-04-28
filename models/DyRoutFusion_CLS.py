@@ -1,20 +1,8 @@
 import math
+import copy
 import torch
 from torch import nn
 import torch.nn.functional as F
-
-
-class LayerNorm(nn.Module):
-    def __init__(self, size, eps=1e-6):
-        super(LayerNorm, self).__init__()
-        self.eps = eps
-        self.a = nn.Parameter(torch.ones(size))
-        self.b = nn.Parameter(torch.zeros(size))
-
-    def forward(self, x):
-        mean = x.mean(-1, keepdim=True)
-        std = x.std(-1, keepdim=True)
-        return self.a * (x - mean) / (std + self.eps) + self.b
 
 
 class SoftRoutingBlock(nn.Module):
@@ -215,20 +203,6 @@ class SARoutingBlock(nn.Module):
         return out
 
 
-class FFN(nn.Module):
-    def __init__(self, opt):
-        super(FFN, self).__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(opt["hidden_size"], opt["hidden_size"]),
-            nn.ReLU(inplace=True),
-            nn.Dropout(opt["dropout"])
-        )
-        self.linear = nn.Linear(opt["ffn_size"], opt["hidden_size"])
-
-    def forward(self, x):
-        return self.linear(self.fc(x))
-
-
 class MHAtt(nn.Module):
     def __init__(self, opt):
         super(MHAtt, self).__init__()
@@ -291,6 +265,33 @@ class MHAtt(nn.Module):
         return torch.matmul(att_map, value)
 
 
+class FFN(nn.Module):
+    def __init__(self, opt):
+        super(FFN, self).__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(opt["hidden_size"], opt["hidden_size"]),
+            nn.ReLU(inplace=True),
+            nn.Dropout(opt["dropout"])
+        )
+        self.linear = nn.Linear(opt["ffn_size"], opt["hidden_size"])
+
+    def forward(self, x):
+        return self.linear(self.fc(x))
+
+
+class LayerNorm(nn.Module):
+    def __init__(self, size, eps=1e-6):
+        super(LayerNorm, self).__init__()
+        self.eps = eps
+        self.a = nn.Parameter(torch.ones(size))
+        self.b = nn.Parameter(torch.zeros(size))
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return self.a * (x - mean) / (std + self.eps) + self.b
+
+
 class multiTRAR_SA_block(nn.Module):
     def __init__(self, opt):
         super(multiTRAR_SA_block, self).__init__()
@@ -329,15 +330,10 @@ class DynRT_E(nn.Module):
 
     def forward(self, y, x, y_mask, x_mask):
         # y text (bs, max_len, dim) x img (bs, gird_num, dim) y_mask (bs, 1, 1, max_len) x_mask (bs, 1, 1, grid_num)
-        x_masks = getMasks_img_multimodal(x_mask, self.opt)
-        # Input encoder last hidden vector
-        # And obtain decoder last hidden vectors
+        # Input encoder last hidden vector and obtain decoder last hidden vectors
         for i, dec in enumerate(self.dec_list):
-            y = dec(x, y, x_masks[:i+1], y_mask, self.tau, self.training)   # (4, 360, 768)
+            y = dec(x, y, x_mask, y_mask, self.tau, self.training)   # (4, 360, 768)
         return y, x
-
-    def set_tau(self, tau):
-        self.tau = tau
 
 
 class DyRoutTrans(nn.Module):

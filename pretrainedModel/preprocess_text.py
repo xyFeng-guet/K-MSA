@@ -2,6 +2,7 @@ import requests
 import random
 import hashlib
 import pickle
+from tqdm import tqdm
 
 
 class BaiDuFanyi:
@@ -19,8 +20,9 @@ class BaiDuFanyi:
             'ch': [],
             'en': []
         }
+        pbar = tqdm(textDataset, desc='Translate')
 
-        for text in textDataset:
+        for text in pbar:
             translateText['ch'].append(text)
             sign = self.appid + text + str(self.salt) + self.secretKey
             md = hashlib.md5()
@@ -51,9 +53,13 @@ def ReadSaveData(do, data):
             for text in data[types]['raw_text']:
                 rawText.append(text)
         return rawText
-    else:
-        with open('/opt/data/private/K-MSA/pretrained/pretrained_text.pkl', 'wb') as f:
+    elif do == 'save':
+        with open('/opt/data/private/K-MSA/pretrainedModel/pretrained_text.pkl', 'wb') as f:
             pickle.dump(data, f)
+            f.close()
+    else:
+        with open('/opt/data/private/K-MSA/pretrainedModel/pretrained_text.pkl', 'rb') as f:
+            data = pickle.load(f)
             f.close()
 
 
@@ -61,6 +67,8 @@ if __name__ == '__main__':
     appKey = '20240427002036678'            # 你在第一步申请的APP ID
     appSecret = 'q55okNouXDa0e8_qu95V'      # 公钥
     BaiduTranslate_test = BaiDuFanyi(appKey, appSecret)
+
+    # ReadSaveData('check', None)
 
     Text_data = ReadSaveData('read', None)
 
