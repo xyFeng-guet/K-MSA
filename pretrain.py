@@ -4,7 +4,7 @@ from tqdm import tqdm
 from core.dataset import MMDataLoader
 from core.scheduler import get_scheduler
 from core.utils import AverageMeter, setup_seed, save_model, save_print_results
-from models.PretrainedAdapter import build_pretrained_model
+from models.Encoder_KIAdapter import build_pretrained_model
 from core.metric import MetricsTop
 
 
