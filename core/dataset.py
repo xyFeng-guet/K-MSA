@@ -49,6 +49,7 @@ class MMDataset(Dataset):
             self.vision_lengths = data[self.mode]['vision_lengths']
         self.audio[self.audio == -np.inf] = 0
 
+        self.__gen_mask(data[self.mode])
         if self.args.need_truncated:
             self.__truncated()
 
@@ -63,9 +64,9 @@ class MMDataset(Dataset):
             data = pickle.load(f)
 
         self.text = data[self.mode]['text_bert'].astype(np.float32)
+        self.rawText = data[self.mode]['raw_text']
         self.vision = data[self.mode]['vision'].astype(np.float32)
         self.audio = data[self.mode]['audio'].astype(np.float32)
-        self.rawText = data[self.mode]['raw_text']
 
         self.ids = data[self.mode]['id']
         self.labels = {
@@ -78,6 +79,7 @@ class MMDataset(Dataset):
         self.vision_lengths = data[self.mode]['vision_lengths']
         self.audio[self.audio == -np.inf] = 0
 
+        self.__gen_mask(data[self.mode])
         self.__truncated()
 
     def __truncated(self):
@@ -104,6 +106,21 @@ class MMDataset(Dataset):
         self.vision = Truncated(self.vision, video_length)
         self.audio = Truncated(self.audio, audio_length)
 
+    def __gen_mask(self, data):
+        vision_tmp = torch.sum(torch.tensor(data['vision']), dim=-1)
+        vision_mask = (vision_tmp == 0)
+        vision_mask = torch.cat((vision_mask[:, 0:1], vision_mask), dim=-1)
+        for i in range(self.__len__()):
+            vision_mask[i][0] = False
+        self.vision_padding_mask = vision_mask
+
+        audio_tmp = torch.sum(torch.tensor(data['audio']), dim=-1)
+        audio_mask = (audio_tmp == 0)
+        audio_mask = torch.cat((audio_mask[:, 0:1], audio_mask), dim=-1)
+        for i in range(self.__len__()):
+            audio_mask[i][0] = False
+        self.audio_padding_mask = audio_mask
+
     def __len__(self):
         return len(self.labels['M'])
 
@@ -125,6 +142,8 @@ class MMDataset(Dataset):
         }
         sample['audio_lengths'] = self.audio_lengths[index]
         sample['vision_lengths'] = self.vision_lengths[index]
+        sample['vision_padding_mask'] = self.vision_padding_mask[index]
+        sample['audio_padding_mask'] = self.audio_padding_mask[index]
         return sample
 
 

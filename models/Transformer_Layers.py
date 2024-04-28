@@ -1,11 +1,10 @@
 import torch
 from torch import nn, einsum
 from einops import rearrange, repeat
-from transformers import BertModel, BertTokenizer, BertConfig
 
 
-def pair(t):
-    return t if isinstance(t, tuple) else (t, t)
+# self.enc_v = Transformer(num_frames=300, dim=128, depth=1, heads=8, mlp_dim=128)
+# self.enc_a = Transformer(num_frames=300, dim=128, depth=1, heads=8, mlp_dim=128)
 
 
 class PreNormForward(nn.Module):
@@ -191,31 +190,3 @@ class CrossTransformer(nn.Module):
         x_s2t = self.CrossTransformerEncoder(source_x, target_x)
 
         return x_s2t
-
-
-class BertTextEncoder(nn.Module):
-    def __init__(self, pretrained='bert-base-uncased'):
-        super().__init__()
-        self.model_config = BertConfig.from_pretrained(pretrained, output_hidden_states=True)
-        self.tokenizer = BertTokenizer.from_pretrained(pretrained, do_lower_case=True)
-        self.model = BertModel.from_pretrained(pretrained, config=self.model_config)
-
-    def get_tokenizer(self):
-        return self.tokenizer
-
-    def forward(self, text):
-        """
-        text: (batch_size, 3, seq_len)
-        3: input_ids, input_mask, segment_ids
-        input_ids: input_ids,
-        input_mask: attention_mask,
-        segment_ids: token_type_ids
-        """
-        input_ids, input_mask, segment_ids = text[:, 0, :].long(), text[:, 1, :].float(), text[:, 2, :].long()    # 更换原始文本，使用tokenizer
-        last_hidden_states = self.model(
-            input_ids=input_ids,
-            attention_mask=input_mask,
-            token_type_ids=segment_ids
-        )  # type: ignore # Models outputs are now tuples
-        last_hidden_states = last_hidden_states[0]
-        return last_hidden_states

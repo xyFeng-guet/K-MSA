@@ -4,7 +4,7 @@ from tqdm import tqdm
 from core.dataset import MMDataLoader
 from core.scheduler import get_scheduler
 from core.utils import AverageMeter, setup_seed, save_model, save_print_results
-from models.Encoder_KIAdapter import build_pretrained_model
+from models.Encoder_KIAdapter import UniPretrain
 from core.metric import MetricsTop
 
 
@@ -47,21 +47,28 @@ def train(modality, model, device, train_loader, optimizer, loss_fn, epoch, metr
 
     model.train()
     for data in train_pbar:
-        img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
+        inputs = {
+            'V': data['vision'].to(device),
+            'A': data['audio'].to(device),
+            'T': data['text'].to(device),
+            'mask': {
+                'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
+                'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device)
+            }
+        }
         label = data['labels'][modality].to(device)
         label = label.view(-1, 1)
-        batchsize = img.shape[0]
+        batchsize = inputs['V'].shape[0]
 
-        output = model(img, audio, text)
-
-        loss = loss_fn(output, label)
+        output = model(inputs)
+        loss = loss_fn(output[0], label)
         losses.update(loss.item(), batchsize)
         loss.backward()
 
         optimizer.step()
         optimizer.zero_grad()
 
-        y_pred.append(output.cpu())
+        y_pred.append(output[0].cpu())
         y_true.append(label.cpu())
 
         train_pbar.set_description('train')
@@ -85,16 +92,24 @@ def evaluate(modality, model, device, eval_loader, optimizer, loss_fn, epoch, me
     model.eval()
     with torch.no_grad():
         for data in test_pbar:
-            img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
+            inputs = {
+                'V': data['vision'].to(device),
+                'A': data['audio'].to(device),
+                'T': data['text'].to(device),
+                'mask': {
+                    'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
+                    'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device)
+                }
+            }
             label = data['labels'][modality].to(device)
             label = label.view(-1, 1)
-            batchsize = img.shape[0]
+            batchsize = inputs['V'].shape[0]
 
-            output = model(img, audio, text)
-            y_pred.append(output.cpu())
+            output = model(inputs)
+            y_pred.append(output[0].cpu())
             y_true.append(label.cpu())
 
-            loss = loss_fn(output, label)
+            loss = loss_fn(output[0], label)
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('eval')
@@ -118,16 +133,24 @@ def test(modality, model, device, test_loader, optimizer, loss_fn, epoch, metric
     model.eval()
     with torch.no_grad():
         for data in test_pbar:
-            img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
+            inputs = {
+                'V': data['vision'].to(device),
+                'A': data['audio'].to(device),
+                'T': data['text'].to(device),
+                'mask': {
+                    'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
+                    'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device)
+                }
+            }
             label = data['labels'][modality].to(device)
             label = label.view(-1, 1)
-            batchsize = img.shape[0]
+            batchsize = inputs['V'].shape[0]
 
-            output = model(img, audio, text)
-            y_pred.append(output.cpu())
+            output = model(inputs)
+            y_pred.append(output[0].cpu())
             y_true.append(label.cpu())
 
-            loss = loss_fn(output, label)
+            loss = loss_fn(output[0], label)
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('test')
@@ -148,7 +171,7 @@ def main(modality):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     setup_seed(opt.seed)
 
-    model = build_pretrained_model(modality).to(device)
+    model = UniPretrain(modality).to(device)
     dataLoader = MMDataLoader(opt)
     optimizer = torch.optim.AdamW(
         model.parameters(),
