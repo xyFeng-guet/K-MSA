@@ -1,6 +1,6 @@
 import torch
-import torch.nn as nn
-from torch.nn import TransformerEncoder, TransformerEncoderLayer
+from torch import nn, einsum
+from einops import rearrange
 from transformers import BertConfig, BertModel, BertTokenizer
 
 
@@ -56,11 +56,6 @@ class FeatureProjector(nn.Module):
         return x
 
 
-class MixDomainAdapter(nn.Module):
-    def __init__(self) -> None:
-        super().__init__()
-
-
 class PositionEncodingTraining(nn.Module):
     """Construct the CLS token, position and patch embeddings.
     """
@@ -79,6 +74,164 @@ class PositionEncodingTraining(nn.Module):
         embeddings = embeddings + self.position_embeddings
         embeddings = self.dropout(embeddings)
         return embeddings
+
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, hidden_dim, dropout=0.):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        return self.net(x)
+
+
+class Attention(nn.Module):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
+        super().__init__()
+        inner_dim = dim_head * heads
+        project_out = not (heads == 1 and dim_head == dim)
+
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+
+        self.attend = nn.Softmax(dim=-1)
+        self.to_q = nn.Linear(dim, inner_dim, bias=False)
+        self.to_k = nn.Linear(dim, inner_dim, bias=False)
+        self.to_v = nn.Linear(dim, inner_dim, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, dim),
+            nn.Dropout(dropout)
+        ) if project_out else nn.Identity()
+
+    def forward(self, q, k, v):
+        b, n, _, h = *q.shape, self.heads
+        q = self.to_q(q)
+        k = self.to_k(k)
+        v = self.to_v(v)
+
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k, v))
+        dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
+
+        attn = self.attend(dots)
+
+        out = einsum('b h i j, b h j d -> b h i d', attn, v)
+        out = rearrange(out, 'b h n d -> b n (h d)')
+
+        return self.to_out(out)
+
+
+class PreNormForward(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.fn = fn
+
+    def forward(self, x, **kwargs):
+        return self.fn(self.norm(x), **kwargs)
+
+
+class PreNormAttention(nn.Module):
+    def __init__(self, dim, fn):
+        super().__init__()
+        self.norm_q = nn.LayerNorm(dim)
+        self.norm_k = nn.LayerNorm(dim)
+        self.norm_v = nn.LayerNorm(dim)
+        self.fn = fn
+
+    def forward(self, q, k, v, **kwargs):
+        q = self.norm_q(q)
+        k = self.norm_k(k)
+        v = self.norm_v(v)
+
+        return self.fn(q, k, v)
+
+
+class TransformerEncoder(nn.Module):
+    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
+        super().__init__()
+        self.layers = nn.ModuleList([])
+        for _ in range(depth):
+            self.layers.append(
+                nn.ModuleList([
+                    PreNormAttention(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+                    PreNormForward(dim, FeedForward(dim, mlp_dim, dropout=dropout))
+                ])
+            )
+
+    def forward(self, x):
+        # if save_hidden:
+        #     hidden_list = []
+        #     hidden_list.append(x)
+        #     for attn, ff in self.layers:
+        #         x = attn(x, x, x) + x
+        #         x = ff(x) + x
+        #         hidden_list.append(x)
+        #     return hidden_list
+        # else:
+        for attn, ff in self.layers:
+            x = attn(x, x, x) + x
+            x = ff(x) + x
+        return x
+
+
+class Transformer(nn.Module):
+    def __init__(self, *, num_frames, dim, depth, heads, mlp_dim, dim_head=64, dropout=0., emb_dropout=0.):
+        super().__init__()
+        '''
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_frames + token_len, dim))
+        self.extra_token = nn.Parameter(torch.zeros(1, token_len, dim))
+        '''
+
+        self.pos_embedding = nn.Parameter(torch.randn(1, num_frames, dim))
+        self.extra_token = None
+
+        self.dropout = nn.Dropout(emb_dropout)
+
+        self.encoder = TransformerEncoder(dim, depth, heads, dim_head, mlp_dim, dropout)
+
+    def forward(self, x):
+        b, n, _ = x.shape
+
+        # if self.token_len is not None:
+        #     extra_token = repeat(self.extra_token, '1 n d -> b n d', b=b)
+        #     x = torch.cat((extra_token, x), dim=1)
+        #     x = x + self.pos_embedding[:, :n+self.token_len]
+        # else:
+        x = x + self.pos_embedding[:, :n]
+        x = self.dropout(x)
+        x = self.encoder(x)
+
+        return x
+
+
+class MixDomainAdapter(nn.Module):
+    def __init__(self, up_prj, down_prj, dim_feedforward, nhead=4, dropout=0.1, num_layers=2, activation='gelu'):
+        super(MixDomainAdapter, self).__init__()
+        self.down_project = nn.Linear(up_prj, down_prj)
+        self.up_project = nn.Linear(down_prj, up_prj)
+
+        encoder_layers = TransformerEncoderLayer(dim_feedforward, nhead, dim_feedforward, dropout, activation=activation, batch_first=True)
+        self.transformer_encoder = TransformerEncoder(encoder_layers, num_layers)
+
+        self.know_inj = nn.Sequential(
+            self.down_project,
+            self.transformer_encoder,
+            self.up_project
+        )
+
+        self.laynorm = nn.LayerNorm(up_prj)
+
+    def forward(self, ex_know):
+        domain_know = self.know_inj(ex_know)
+        domain_know = domain_know + ex_know
+        return domain_know
 
 
 class TfEncoder(nn.Module):
@@ -197,8 +350,8 @@ class UnimodalEncoder(nn.Module):
 
         # All Encoders of Each Modality
         self.enc_t = UniPretrain(modality="T", pretrained=bert_pretrained, num_patches=50, proj_fea_dim=768)
-        self.enc_v = UniPretrain(modality="V", num_patches=50, fea_size=709)
-        self.enc_a = UniPretrain(modality="A", num_patches=50, fea_size=33)
+        self.enc_v = UniPretrain(modality="V", num_patches=50, fea_size=20)
+        self.enc_a = UniPretrain(modality="A", num_patches=50, fea_size=5)
 
     def forward(self, inputs_data_mask):
         # Encoder Part

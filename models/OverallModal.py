@@ -11,8 +11,7 @@ class KMSA(nn.Module):
         self.UniEncKI = UnimodalEncoder(opt, bert_pretrained)
 
         # Multimodal Fusion
-        # self.DyMultiFus = DyRoutTrans(opt)
-        # self.DyMultiFus = DynRT(text_encoder, vision_encoder, acoustic_encoder, opt)
+        self.DyMultiFus = DyRoutTrans(opt)
 
         # Output Classification for Sentiment Analysis
         self.CLS = SentiCLS(opt)

@@ -5,111 +5,6 @@ from torch import nn
 import torch.nn.functional as F
 
 
-class SoftRoutingBlock(nn.Module):
-    def __init__(self, in_channel, out_channel, pooling='attention', reduction=2):
-        super(SoftRoutingBlock, self).__init__()
-        self.pooling = pooling
-
-        if pooling == 'avg':
-            self.pool = nn.AdaptiveAvgPool1d(1)
-        elif pooling == 'fc':
-            self.pool = nn.Linear(in_channel, 1)
-
-        self.mlp = nn.Sequential(
-            nn.Linear(in_channel, in_channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(in_channel // reduction, out_channel, bias=True),
-        )
-
-    def forward(self, x, tau, masks):
-        if self.pooling == 'avg':
-            x = x.transpose(1, 2)
-            x = self.pool(x)
-            logits = self.mlp(x.squeeze(-1))
-        elif self.pooling == 'fc':
-            b, _, c = x.size()
-            mask = self.make_mask(x).squeeze(1).squeeze(1).unsqueeze(2)     # (8, 1, 1, 49) -> (8, 49, 1)
-            scores = self.pool(x)       # (8, 49, 1)
-            scores = scores.masked_fill(mask, -1e9)
-            scores = F.softmax(scores, dim=1)
-            _x = x.mul(scores)
-            x = torch.sum(_x, dim=1)
-            logits = self.mlp(x)
-
-        alpha = F.softmax(logits, dim=-1)  #
-        return alpha
-
-    def make_mask(self, feature):
-        return (torch.sum(
-            torch.abs(feature),
-            dim=-1
-        ) == 0).unsqueeze(1).unsqueeze(2)
-
-
-class HardRoutingBlock(nn.Module):
-    def __init__(self, in_channel, out_channel, pooling='attention', reduction=2):
-        super(HardRoutingBlock, self).__init__()
-        self.pooling = pooling
-
-        if pooling == 'avg':
-            self.pool = nn.AdaptiveAvgPool1d(1)
-        elif pooling == 'fc':
-            self.pool = nn.Linear(in_channel, 1)
-
-        self.mlp = nn.Sequential(
-            nn.Linear(in_channel, in_channel // reduction, bias=False),
-            nn.ReLU(inplace=True),
-            nn.Linear(in_channel // reduction, out_channel, bias=True),
-        )
-
-    def forward(self, x, tau, masks):
-        if self.pooling == 'avg':
-            x = x.transpose(1, 2)
-            x = self.pool(x)
-            logits = self.mlp(x.squeeze(-1))
-        elif self.pooling == 'fc':
-            b, _, c = x.size()
-            mask = self.make_mask(x).squeeze(1).squeeze(1).unsqueeze(2)
-            scores = self.pool(x)
-            scores = scores.masked_fill(mask, -1e9)
-            scores = F.softmax(scores, dim=1)
-            _x = x.mul(scores)
-            x = torch.sum(_x, dim=1)
-            logits = self.mlp(x)
-
-        alpha = self.gumbel_softmax(logits, -1, tau)
-        return alpha
-
-    def gumbel_softmax(self, logits, dim=-1, temperature=0.1):
-        '''
-        Use this to replace argmax
-        My input is probability distribution, multiply by 10 to get a value like logits' outputs.
-        '''
-        gumbels = -torch.empty_like(logits).exponential_().log()
-        logits = (logits.log_softmax(dim=dim) + gumbels) / temperature
-        return F.softmax(logits, dim=dim)
-
-    def make_mask(self, feature):
-        return (torch.sum(
-            torch.abs(feature),
-            dim=-1
-        ) == 0).unsqueeze(1).unsqueeze(2)
-
-
-class mean_Block(nn.Module):
-    """
-    Self-Attention Routing Block
-    """
-    def __init__(self, hidden_size, orders):
-        super(mean_Block, self).__init__()
-        self.len = orders
-        self.hidden_size = hidden_size
-
-    def forward(self, x, tau, masks):
-        alpha = (1 / self.len) * torch.ones(x.shape[0], self.len).to(x.device)      # (bs, 4)
-        return alpha
-
-
 class SARoutingBlock(nn.Module):
     """
     Self-Attention Routing Block
@@ -384,3 +279,57 @@ class SentiCLS(nn.Module):
         output = self.fusion_layer(fusion_features)
 
         return output
+
+
+'''
+# class CrossTransformerEncoder(nn.Module):
+#     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
+#         super().__init__()
+#         self.layers = nn.ModuleList([])
+#         for _ in range(depth):
+#             self.layers.append(nn.ModuleList([
+#                 PreNormAttention(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
+#                 PreNormForward(dim, FeedForward(dim, mlp_dim, dropout=dropout))
+#             ]))
+
+#     def forward(self, source_x, target_x):
+#         for attn, ff in self.layers:
+#             target_x_tmp = attn(target_x, source_x, source_x)
+#             target_x = target_x_tmp + target_x
+#             target_x = ff(target_x) + target_x
+#         return target_x
+
+
+# class CrossTransformer(nn.Module):
+#     def __init__(self, *, source_num_frames, tgt_num_frames, dim, depth, heads, mlp_dim, pool='cls', dim_head=64, dropout=0., emb_dropout=0.):
+#         super().__init__()
+
+#         self.pos_embedding_s = nn.Parameter(torch.randn(1, source_num_frames + 1, dim))
+#         self.pos_embedding_t = nn.Parameter(torch.randn(1, tgt_num_frames + 1, dim))
+#         self.extra_token = nn.Parameter(torch.zeros(1, 1, dim))
+
+#         self.dropout = nn.Dropout(emb_dropout)
+
+#         self.CrossTransformerEncoder = CrossTransformerEncoder(dim, depth, heads, dim_head, mlp_dim, dropout)
+
+#         self.pool = pool
+
+#     def forward(self, source_x, target_x):
+#         b, n_s, _ = source_x.shape
+#         b, n_t, _ = target_x.shape
+
+#         extra_token = repeat(self.extra_token, '1 1 d -> b 1 d', b=b)
+
+#         source_x = torch.cat((extra_token, source_x), dim=1)
+#         source_x = source_x + self.pos_embedding_s[:, : n_s+1]
+
+#         target_x = torch.cat((extra_token, target_x), dim=1)
+#         target_x = target_x + self.pos_embedding_t[:, : n_t+1]
+
+#         source_x = self.dropout(source_x)
+#         target_x = self.dropout(target_x)
+
+#         x_s2t = self.CrossTransformerEncoder(source_x, target_x)
+
+#         return x_s2t
+'''
