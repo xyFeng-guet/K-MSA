@@ -1,3 +1,3 @@
-cd /opt/data/private/K-MSA
+cd /opt/data/private/K-MSA/
 
-python ./train.py
+python ./pretrain.py

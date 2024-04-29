@@ -368,19 +368,19 @@ class SentiCLS(nn.Module):
     def __init__(self, opt):
         super(SentiCLS, self).__init__()
         self.fusion_layer = nn.Sequential(
-            nn.Linear(128 * 3, 128, bias=True),
+            nn.Linear(768 + 256 * 2, 256, bias=True),
             nn.ReLU(),
-            nn.Linear(128, 128, bias=True),
+            nn.Linear(256, 64, bias=True),
             nn.ReLU(),
-            nn.Linear(128, 1, bias=True)
+            nn.Linear(64, 1, bias=True)
         )
 
     def forward(self, hidden_text, hidden_video, hidden_acoustic):
+        h_t_global = hidden_text[:, 0, :]   # torch.mean(hidden_text, dim=1)
         h_v_global = torch.mean(hidden_video, dim=1)
         h_a_global = torch.mean(hidden_acoustic, dim=1)
-        h_t_global = torch.mean(hidden_text, dim=1)
 
-        fusion_features = torch.cat((h_v_global, h_a_global, h_t_global), dim=-1)
+        fusion_features = torch.cat((h_t_global, h_v_global, h_a_global), dim=-1)
         output = self.fusion_layer(fusion_features)
 
         return output

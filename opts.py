@@ -7,14 +7,14 @@ def parse_opts():
         'dataset': [
             dict(name='--datasetName',
                  type=str,
-                 default='mosi',
+                 default='sims',
                  help='mosi, mosei or sims'),
             dict(name='--dataPath',
-                 default="/opt/data/private/Project/Datasets/MSA_Datasets/MOSI/Processed/unaligned_50.pkl",
+                 default="/opt/data/private/Project/Datasets/MSA_Datasets/SIMS/Processed/unaligned_39.pkl",
                  type=str,
                  help=' '),
             dict(name='--seq_lens',
-                 default=[50, 300, 300],
+                 default=[50, 50, 50],
                  type=list,
                  help=' '),
             dict(name='--num_workers',
@@ -35,10 +35,10 @@ def parse_opts():
 
         'common': [
             dict(name='--seed',  # try different seeds
-                 default=18,
+                 default=1111,
                  type=int),
             dict(name='--batch_size',
-                 default=32,
+                 default=64,
                  type=int,
                  help=' '),
             dict(name='--lr',

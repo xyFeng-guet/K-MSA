@@ -52,12 +52,21 @@ def train(model, train_loader, optimizer, loss_fn, epoch, metrics):
 
     model.train()
     for data in train_pbar:
-        img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
+        inputs = {
+            'V': data['vision'].to(device),
+            'A': data['audio'].to(device),
+            'T': data['text'].to(device),
+            'mask': {
+                'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
+                'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device),
+                'T': None
+            }
+        }
         label = data['labels']['M'].to(device)
         label = label.view(-1, 1)
-        batchsize = img.shape[0]
+        batchsize = inputs['V'].shape[0]
 
-        output = model(img, audio, text)
+        output = model(inputs)
 
         loss = loss_fn(output, label)
         losses.update(loss.item(), batchsize)
@@ -90,12 +99,21 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, metrics):
     model.eval()
     with torch.no_grad():
         for data in test_pbar:
-            img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
+            inputs = {
+                'V': data['vision'].to(device),
+                'A': data['audio'].to(device),
+                'T': data['text'].to(device),
+                'mask': {
+                    'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
+                    'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device),
+                    'T': None
+                }
+            }
             label = data['labels']['M'].to(device)
             label = label.view(-1, 1)
-            batchsize = img.shape[0]
+            batchsize = inputs['V'].shape[0]
 
-            output = model(img, audio, text)
+            output = model(inputs)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
@@ -123,12 +141,21 @@ def test(model, test_loader, optimizer, loss_fn, epoch, metrics):
     model.eval()
     with torch.no_grad():
         for data in test_pbar:
-            img, audio, text = data['vision'].to(device), data['audio'].to(device), data['text'].to(device)
+            inputs = {
+                'V': data['vision'].to(device),
+                'A': data['audio'].to(device),
+                'T': data['text'].to(device),
+                'mask': {
+                    'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
+                    'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device),
+                    'T': None
+                }
+            }
             label = data['labels']['M'].to(device)
             label = label.view(-1, 1)
-            batchsize = img.shape[0]
+            batchsize = inputs['V'].shape[0]
 
-            output = model(img, audio, text)
+            output = model(inputs)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 

@@ -25,7 +25,7 @@ class MMDataset(Dataset):
 
         self.args.use_bert = True
         self.args.need_truncated = True
-        self.args.need_data_aligned = True
+        self.args.need_data_aligned = False
 
         if self.args.use_bert:
             self.text = data[self.mode]['text_bert'].astype(np.float32)
@@ -124,12 +124,6 @@ class MMDataset(Dataset):
     def __len__(self):
         return len(self.labels['M'])
 
-    def get_seq_len(self):
-        return (self.text.shape[2], self.vision.shape[1], self.audio.shape[1])      # use_bert
-
-    def get_feature_dim(self):
-        return self.text.shape[2], self.audio.shape[2], self.vision.shape[2]
-
     def __getitem__(self, index):
         sample = {
             'raw_text': self.rawText[index],
@@ -153,9 +147,6 @@ def MMDataLoader(args):
         'valid': MMDataset(args, mode='valid'),
         'test': MMDataset(args, mode='test')
     }
-
-    if 'seq_lens' in args:
-        args.seq_lens = datasets['train'].get_seq_len()
 
     dataLoader = {
         ds: DataLoader(

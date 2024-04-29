@@ -21,19 +21,21 @@ def parse_opts():
     parser.add_argument('--savePath', type=str, default='./pretrainedModel/',
                         help='path for checkpointing')
 
-    parser.add_argument('--seed', type=int, default=111,
+    parser.add_argument('--seed', type=int, default=1111,
                         help='random seed')
-    parser.add_argument('--batch_size', type=int, default=32,
+    parser.add_argument('--batch_size', type=int, default=128,
                         help='')
-    parser.add_argument('--n_epochs', type=int, default=50,
+    parser.add_argument('--n_epochs', type=int, default=300,
                         help='epoch number for training')
     parser.add_argument('--num_workers', type=int, default=8,
                         help='')
-    parser.add_argument('--seq_lens', type=list, default=[50, 50, 200],
+    parser.add_argument('--seq_lens', type=list, default=[50, 55, 400],
+                        help='features length of each modality for pre-training')
+    parser.add_argument('--fea_dims', type=list, default=[768, 709, 33],
                         help='features length of each modality for pre-training')
     parser.add_argument('--lr', type=int, default=1e-4,
                         help='learning rate')
-    parser.add_argument('--weight_decay', type=int, default=1e-4,
+    parser.add_argument('--weight_decay', type=int, default=1e-3,
                         help='learning rate')
 
     args = parser.parse_args()
@@ -52,8 +54,8 @@ def train(modality, model, device, train_loader, optimizer, loss_fn, epoch, metr
             'A': data['audio'].to(device),
             'T': data['text'].to(device),
             'mask': {
-                'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
-                'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device)
+                'V': data['vision_padding_mask'].to(device),
+                'A': data['audio_padding_mask'].to(device)
             }
         }
         label = data['labels'][modality].to(device)
@@ -61,14 +63,14 @@ def train(modality, model, device, train_loader, optimizer, loss_fn, epoch, metr
         batchsize = inputs['V'].shape[0]
 
         output = model(inputs)
-        loss = loss_fn(output[0], label)
+        loss = loss_fn(output, label)
         losses.update(loss.item(), batchsize)
         loss.backward()
 
         optimizer.step()
         optimizer.zero_grad()
 
-        y_pred.append(output[0].cpu())
+        y_pred.append(output.cpu())
         y_true.append(label.cpu())
 
         train_pbar.set_description('train')
@@ -106,10 +108,10 @@ def evaluate(modality, model, device, eval_loader, optimizer, loss_fn, epoch, me
             batchsize = inputs['V'].shape[0]
 
             output = model(inputs)
-            y_pred.append(output[0].cpu())
+            y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
-            loss = loss_fn(output[0], label)
+            loss = loss_fn(output, label)
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('eval')
@@ -147,10 +149,10 @@ def test(modality, model, device, test_loader, optimizer, loss_fn, epoch, metric
             batchsize = inputs['V'].shape[0]
 
             output = model(inputs)
-            y_pred.append(output[0].cpu())
+            y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
-            loss = loss_fn(output[0], label)
+            loss = loss_fn(output, label)
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('test')
@@ -171,8 +173,8 @@ def main(modality):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     setup_seed(opt.seed)
 
-    model = UniPretrain(modality).to(device)
     dataLoader = MMDataLoader(opt)
+    model = UniPretrain(modality, num_patches=opt.seq_lens[2], fea_size=opt.fea_dims[2]).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=opt.lr,
@@ -196,5 +198,5 @@ def main(modality):
 
 
 if __name__ == '__main__':
-    for m in ["V"]:     # , "T", "A"
+    for m in ["A"]:     # , "T", "A"
         main(modality=m)
