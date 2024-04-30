@@ -28,6 +28,11 @@ class KMSA(nn.Module):
 
         return prediction
 
+    def preprocess_model(self):
+        # 加载预训练模型
+        # 冻结外部知识注入参数
+        pass
+
 
 def build_model(opt):
     if opt.datasetName == 'sims':

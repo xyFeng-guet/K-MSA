@@ -56,11 +56,11 @@ class FeatureProjector(nn.Module):
         return x
 
 
-class PositionEncodingTraining(nn.Module):
+class PositionEncoding(nn.Module):
     """Construct the CLS token, position and patch embeddings.
     """
     def __init__(self, num_patches, fea_size, tf_hidden_dim, drop_out):
-        super().__init__()
+        super(PositionEncoding, self).__init__()
         self.cls_token = nn.Parameter(torch.ones(1, 1, tf_hidden_dim))
         self.proj = nn.Linear(fea_size, tf_hidden_dim)
         self.position_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, tf_hidden_dim))
@@ -153,76 +153,38 @@ class PreNormAttention(nn.Module):
         return self.fn(q, k, v)
 
 
-class TransformerEncoder(nn.Module):
-    def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
-        super().__init__()
+class TransformerEncoderLayers(nn.Module):
+    def __init__(self, dim_feedforward, nhead, num_layers, mlp_dim, dim_head=64, dropout=0.):
+        super(TransformerEncoderLayers, self).__init__()
         self.layers = nn.ModuleList([])
-        for _ in range(depth):
+        for _ in range(num_layers):
             self.layers.append(
                 nn.ModuleList([
-                    PreNormAttention(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-                    PreNormForward(dim, FeedForward(dim, mlp_dim, dropout=dropout))
+                    PreNormAttention(dim_feedforward, Attention(dim_feedforward, heads=nhead, dim_head=dim_head, dropout=dropout)),
+                    PreNormForward(dim_feedforward, FeedForward(dim_feedforward, mlp_dim, dropout=dropout))
                 ])
             )
 
     def forward(self, x):
-        # if save_hidden:
-        #     hidden_list = []
-        #     hidden_list.append(x)
-        #     for attn, ff in self.layers:
-        #         x = attn(x, x, x) + x
-        #         x = ff(x) + x
-        #         hidden_list.append(x)
-        #     return hidden_list
-        # else:
+        hidden_list = []
+        hidden_list.append(x)
         for attn, ff in self.layers:
             x = attn(x, x, x) + x
             x = ff(x) + x
-        return x
-
-
-class Transformer(nn.Module):
-    def __init__(self, *, num_frames, dim, depth, heads, mlp_dim, dim_head=64, dropout=0., emb_dropout=0.):
-        super().__init__()
-        '''
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_frames + token_len, dim))
-        self.extra_token = nn.Parameter(torch.zeros(1, token_len, dim))
-        '''
-
-        self.pos_embedding = nn.Parameter(torch.randn(1, num_frames, dim))
-        self.extra_token = None
-
-        self.dropout = nn.Dropout(emb_dropout)
-
-        self.encoder = TransformerEncoder(dim, depth, heads, dim_head, mlp_dim, dropout)
-
-    def forward(self, x):
-        b, n, _ = x.shape
-
-        # if self.token_len is not None:
-        #     extra_token = repeat(self.extra_token, '1 n d -> b n d', b=b)
-        #     x = torch.cat((extra_token, x), dim=1)
-        #     x = x + self.pos_embedding[:, :n+self.token_len]
-        # else:
-        x = x + self.pos_embedding[:, :n]
-        x = self.dropout(x)
-        x = self.encoder(x)
-
-        return x
+            hidden_list.append(x)
+        return hidden_list, x
 
 
 class MixDomainAdapter(nn.Module):
-    def __init__(self, up_prj, down_prj, dim_feedforward, nhead=4, dropout=0.1, num_layers=2, activation='gelu'):
+    def __init__(self, up_prj, down_prj, dim_feedforward, nhead=4, num_layers=2, dropout=0.1):
         super(MixDomainAdapter, self).__init__()
         self.down_project = nn.Linear(up_prj, down_prj)
         self.up_project = nn.Linear(down_prj, up_prj)
-
-        encoder_layers = TransformerEncoderLayer(dim_feedforward, nhead, dim_feedforward, dropout, activation=activation, batch_first=True)
-        self.transformer_encoder = TransformerEncoder(encoder_layers, num_layers)
+        self.tfencoder = TransformerEncoderLayers(dim_feedforward, nhead, num_layers, dim_feedforward // 2, dim_head=64, dropout=dropout)
 
         self.know_inj = nn.Sequential(
             self.down_project,
-            self.transformer_encoder,
+            self.tfencoder,
             self.up_project
         )
 
@@ -235,18 +197,16 @@ class MixDomainAdapter(nn.Module):
 
 
 class TfEncoder(nn.Module):
-    def __init__(self, fea_size, num_patches, nhead, dim_feedforward, num_layers, dropout=0., activation='gelu'):
+    def __init__(self, fea_size, num_patches, nhead, dim_feedforward, num_layers, pos_dropout=0., tf_dropout=0.2):
         super(TfEncoder, self).__init__()
         self.src_mask = None
-        self.pos_encoder = PositionEncodingTraining(
+        self.pos_encoder = PositionEncoding(
             num_patches=num_patches,
             fea_size=fea_size,
             tf_hidden_dim=dim_feedforward,
-            drop_out=dropout
+            drop_out=pos_dropout
         )
-
-        encoder_layers = TransformerEncoderLayer(dim_feedforward, nhead, dim_feedforward, dropout, activation=activation, batch_first=True)
-        self.transformer_encoder = TransformerEncoder(encoder_layers, num_layers)
+        self.tfencoder = TransformerEncoderLayers(dim_feedforward, nhead, num_layers, dim_feedforward // 2, dim_head=64, dropout=tf_dropout)
 
     def _generate_square_subsequent_mask(self, sz):
         mask = (torch.triu(torch.ones(sz, sz)) == 1)
@@ -264,13 +224,13 @@ class TfEncoder(nn.Module):
         else:
             self.src_mask = None
 
-        output = self.transformer_encoder(src, mask=self.src_mask, src_key_padding_mask=src_key_padding_mask)
+        hidden_list, output = self.tfencoder(src, mask=self.src_mask, src_key_padding_mask=src_key_padding_mask)
 
         return output
 
 
 class UniEncoder(nn.Module):
-    def __init__(self, m, pretrained, num_patches, fea_size, nhead, dim_feedforward, num_layers, drop_out):
+    def __init__(self, m, pretrained, num_patches, fea_size, nhead, dim_feedforward, num_layers):
         super(UniEncoder, self).__init__()
         self.m = m
 
@@ -280,9 +240,7 @@ class UniEncoder(nn.Module):
                 num_patches=num_patches,
                 nhead=nhead,
                 dim_feedforward=dim_feedforward,
-                num_layers=num_layers,
-                dropout=drop_out,
-                activation='gelu'
+                num_layers=num_layers
             )
             self.layernorm = nn.LayerNorm(dim_feedforward)
         else:
@@ -324,8 +282,7 @@ class UniPretrain(nn.Module):
             num_patches=num_patches,
             nhead=8,
             dim_feedforward=proj_fea_dim,
-            num_layers=2,
-            drop_out=drop_out
+            num_layers=2
         )
         self.decoder = Classifier(
             input_size=proj_fea_dim,
