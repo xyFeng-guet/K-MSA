@@ -1,6 +1,7 @@
 import torch
 from torch import nn, einsum
 from einops import rearrange
+from torch.nn import TransformerEncoderLayer, TransformerEncoder
 from transformers import BertConfig, BertModel, BertTokenizer
 
 
@@ -76,156 +77,41 @@ class PositionEncoding(nn.Module):
         return embeddings
 
 
-class FeedForward(nn.Module):
-    def __init__(self, dim, hidden_dim, dropout=0.):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(dim, hidden_dim),
-            nn.GELU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim, dim),
-            nn.Dropout(dropout)
-        )
-
-    def forward(self, x):
-        return self.net(x)
-
-
-class Attention(nn.Module):
-    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
-        super().__init__()
-        inner_dim = dim_head * heads
-        project_out = not (heads == 1 and dim_head == dim)
-
-        self.heads = heads
-        self.scale = dim_head ** -0.5
-
-        self.attend = nn.Softmax(dim=-1)
-        self.to_q = nn.Linear(dim, inner_dim, bias=False)
-        self.to_k = nn.Linear(dim, inner_dim, bias=False)
-        self.to_v = nn.Linear(dim, inner_dim, bias=False)
-
-        self.to_out = nn.Sequential(
-            nn.Linear(inner_dim, dim),
-            nn.Dropout(dropout)
-        ) if project_out else nn.Identity()
-
-    def forward(self, q, k, v):
-        b, n, _, h = *q.shape, self.heads
-        q = self.to_q(q)
-        k = self.to_k(k)
-        v = self.to_v(v)
-
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k, v))
-        dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
-
-        attn = self.attend(dots)
-
-        out = einsum('b h i j, b h j d -> b h i d', attn, v)
-        out = rearrange(out, 'b h n d -> b n (h d)')
-
-        return self.to_out(out)
-
-
-class PreNormForward(nn.Module):
-    def __init__(self, dim, fn):
-        super().__init__()
-        self.norm = nn.LayerNorm(dim)
-        self.fn = fn
-
-    def forward(self, x, **kwargs):
-        return self.fn(self.norm(x), **kwargs)
-
-
-class PreNormAttention(nn.Module):
-    def __init__(self, dim, fn):
-        super().__init__()
-        self.norm_q = nn.LayerNorm(dim)
-        self.norm_k = nn.LayerNorm(dim)
-        self.norm_v = nn.LayerNorm(dim)
-        self.fn = fn
-
-    def forward(self, q, k, v, **kwargs):
-        q = self.norm_q(q)
-        k = self.norm_k(k)
-        v = self.norm_v(v)
-
-        return self.fn(q, k, v)
-
-
-class TransformerEncoderLayers(nn.Module):
-    def __init__(self, dim_feedforward, nhead, num_layers, mlp_dim, dim_head=64, dropout=0.):
-        super(TransformerEncoderLayers, self).__init__()
-        self.layers = nn.ModuleList([])
-        for _ in range(num_layers):
-            self.layers.append(
-                nn.ModuleList([
-                    PreNormAttention(dim_feedforward, Attention(dim_feedforward, heads=nhead, dim_head=dim_head, dropout=dropout)),
-                    PreNormForward(dim_feedforward, FeedForward(dim_feedforward, mlp_dim, dropout=dropout))
-                ])
-            )
-
-    def forward(self, x):
-        hidden_list = []
-        hidden_list.append(x)
-        for attn, ff in self.layers:
-            x = attn(x, x, x) + x
-            x = ff(x) + x
-            hidden_list.append(x)
-        return hidden_list, x
-
-
 class MixDomainAdapter(nn.Module):
-    def __init__(self, up_prj, down_prj, dim_feedforward, nhead=4, num_layers=2, dropout=0.1):
+    def __init__(self, up_prj, down_prj, nhead=4, num_layers=2, dropout=0.1):
         super(MixDomainAdapter, self).__init__()
         self.down_project = nn.Linear(up_prj, down_prj)
         self.up_project = nn.Linear(down_prj, up_prj)
-        self.tfencoder = TransformerEncoderLayers(dim_feedforward, nhead, num_layers, dim_feedforward // 2, dim_head=64, dropout=dropout)
 
-        self.know_inj = nn.Sequential(
-            self.down_project,
-            self.tfencoder,
-            self.up_project
-        )
+        tfencoderlayer = TransformerEncoderLayer(down_prj, nhead, down_prj // 2, dropout=dropout, activation='gelu', batch_first=True)
+        self.tfencoder = TransformerEncoder(tfencoderlayer, num_layers)
 
         self.laynorm = nn.LayerNorm(up_prj)
 
-    def forward(self, ex_know):
-        domain_know = self.know_inj(ex_know)
-        domain_know = domain_know + ex_know
-        return domain_know
+    def forward(self, ex_know, src_key_padding_mask):
+        hidden = self.down_project(ex_know)
+        hidden = self.tfencoder(hidden, mask=None, src_key_padding_mask=src_key_padding_mask)[0]
+        domain_know = self.up_project(hidden)
+        output = domain_know + ex_know
+        return output
 
 
 class TfEncoder(nn.Module):
     def __init__(self, fea_size, num_patches, nhead, dim_feedforward, num_layers, pos_dropout=0., tf_dropout=0.2):
         super(TfEncoder, self).__init__()
-        self.src_mask = None
         self.pos_encoder = PositionEncoding(
             num_patches=num_patches,
             fea_size=fea_size,
             tf_hidden_dim=dim_feedforward,
             drop_out=pos_dropout
         )
-        self.tfencoder = TransformerEncoderLayers(dim_feedforward, nhead, num_layers, dim_feedforward // 2, dim_head=64, dropout=tf_dropout)
 
-    def _generate_square_subsequent_mask(self, sz):
-        mask = (torch.triu(torch.ones(sz, sz)) == 1)
-        mask = mask.float().masked_fill(mask == 0, float('-inf')).masked_fill(mask == 1, float(0.0))
-        return mask
+        tfencoderlayer = TransformerEncoderLayer(dim_feedforward, nhead, dim_feedforward // 2, dropout=tf_dropout, activation='gelu', batch_first=True)
+        self.tfencoder = TransformerEncoder(tfencoderlayer, num_layers)
 
-    def forward(self, src, has_mask=True, src_key_padding_mask=None):
+    def forward(self, src, src_key_padding_mask):
         src = self.pos_encoder(src)
-
-        if has_mask:
-            device = src.device
-            if self.src_mask is None or self.src_mask.size(0) != len(src):
-                mask = self._generate_square_subsequent_mask(len(src)).to(device)
-                self.src_mask = mask
-        else:
-            self.src_mask = None
-
-        hidden_list, output = self.tfencoder(src, mask=self.src_mask, src_key_padding_mask=src_key_padding_mask)
-
+        output, hidden_list = self.tfencoder(src, mask=None, src_key_padding_mask=src_key_padding_mask)
         return output
 
 
@@ -249,9 +135,11 @@ class UniEncoder(nn.Module):
             self.model = BertModel.from_pretrained(pretrained, config=self.model_config)
             # self.projector = FeatureProjector(fea_size, dim_feedforward)
 
+        self.adapter = MixDomainAdapter(up_prj=dim_feedforward, down_prj=dim_feedforward // 2)
+
     def forward(self, inputs, key_padding_mask):
         if self.m in "VA":
-            x = self.tfencoder(inputs, has_mask=False, src_key_padding_mask=key_padding_mask)
+            x = self.tfencoder(inputs, src_key_padding_mask=key_padding_mask)
             hidden_state = self.layernorm(x)
             mean_state = torch.mean(x, dim=-2)
             return hidden_state, mean_state
@@ -272,9 +160,12 @@ class UniEncoder(nn.Module):
 
 
 class UniPretrain(nn.Module):
-    def __init__(self, modality, num_patches, pretrained='./BERT/bert-base-chinese', fea_size=709, proj_fea_dim=256, drop_out=0):
+    def __init__(self, modality, num_patches, pretrained='./BERT/bert-base-chinese', fea_size=709, proj_fea_dim=128, drop_out=0.1):
         super(UniPretrain, self).__init__()
         self.m = modality
+        if modality == "T":
+            proj_fea_dim = 768
+
         self.encoder = UniEncoder(
             m=modality,
             pretrained=pretrained,

@@ -29,7 +29,7 @@ def parse_opts():
                         help='epoch number for training')
     parser.add_argument('--num_workers', type=int, default=8,
                         help='')
-    parser.add_argument('--seq_lens', type=list, default=[50, 55, 400],
+    parser.add_argument('--seq_lens', type=list, default=[39, 55, 400],
                         help='features length of each modality for pre-training')
     parser.add_argument('--fea_dims', type=list, default=[768, 709, 33],
                         help='features length of each modality for pre-training')
@@ -55,14 +55,15 @@ def train(modality, model, device, train_loader, optimizer, loss_fn, epoch, metr
             'T': data['text'].to(device),
             'mask': {
                 'V': data['vision_padding_mask'].to(device),
-                'A': data['audio_padding_mask'].to(device)
+                'A': data['audio_padding_mask'].to(device),
+                'T': None
             }
         }
         label = data['labels'][modality].to(device)
         label = label.view(-1, 1)
         batchsize = inputs['V'].shape[0]
 
-        output = model(inputs)
+        hidden, output = model(inputs)
         loss = loss_fn(output, label)
         losses.update(loss.item(), batchsize)
         loss.backward()
@@ -99,15 +100,16 @@ def evaluate(modality, model, device, eval_loader, optimizer, loss_fn, epoch, me
                 'A': data['audio'].to(device),
                 'T': data['text'].to(device),
                 'mask': {
-                    'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
-                    'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device)
+                    'V': data['vision_padding_mask'].to(device),
+                    'A': data['audio_padding_mask'].to(device),
+                    'T': None
                 }
             }
             label = data['labels'][modality].to(device)
             label = label.view(-1, 1)
             batchsize = inputs['V'].shape[0]
 
-            output = model(inputs)
+            hidden, output = model(inputs)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
@@ -140,15 +142,16 @@ def test(modality, model, device, test_loader, optimizer, loss_fn, epoch, metric
                 'A': data['audio'].to(device),
                 'T': data['text'].to(device),
                 'mask': {
-                    'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
-                    'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device)
+                    'V': data['vision_padding_mask'].to(device),
+                    'A': data['audio_padding_mask'].to(device),
+                    'T': None
                 }
             }
             label = data['labels'][modality].to(device)
             label = label.view(-1, 1)
             batchsize = inputs['V'].shape[0]
 
-            output = model(inputs)
+            hidden, output = model(inputs)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
@@ -168,13 +171,13 @@ def test(modality, model, device, test_loader, optimizer, loss_fn, epoch, metric
     return test_results
 
 
-def main(modality):
+def main(i, modality):
     opt = parse_opts()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     setup_seed(opt.seed)
 
     dataLoader = MMDataLoader(opt)
-    model = UniPretrain(modality, num_patches=opt.seq_lens[2], fea_size=opt.fea_dims[2]).to(device)
+    model = UniPretrain(modality, num_patches=opt.seq_lens[i], fea_size=opt.fea_dims[i]).to(device)
     optimizer = torch.optim.AdamW(
         model.parameters(),
         lr=opt.lr,
@@ -198,5 +201,5 @@ def main(modality):
 
 
 if __name__ == '__main__':
-    for m in ["A"]:     # , "T", "A"
-        main(modality=m)
+    for i, m in enumerate(["V", "A"]):
+        main(i+1, modality=m)
