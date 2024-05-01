@@ -1,6 +1,6 @@
+import copy
 import torch
 from torch import nn, einsum
-from einops import rearrange
 from torch.nn import TransformerEncoderLayer, TransformerEncoder
 from transformers import BertConfig, BertModel, BertTokenizer
 
@@ -86,8 +86,6 @@ class MixDomainAdapter(nn.Module):
         tfencoderlayer = TransformerEncoderLayer(down_prj, nhead, down_prj // 2, dropout=dropout, activation='gelu', batch_first=True)
         self.tfencoder = TransformerEncoder(tfencoderlayer, num_layers)
 
-        self.laynorm = nn.LayerNorm(up_prj)
-
     def forward(self, ex_know, src_key_padding_mask):
         hidden = self.down_project(ex_know)
         hidden = self.tfencoder(hidden, mask=None, src_key_padding_mask=src_key_padding_mask)[0]
@@ -106,13 +104,13 @@ class TfEncoder(nn.Module):
             drop_out=pos_dropout
         )
 
-        tfencoderlayer = TransformerEncoderLayer(dim_feedforward, nhead, dim_feedforward // 2, dropout=tf_dropout, activation='gelu', batch_first=True)
-        self.tfencoder = TransformerEncoder(tfencoderlayer, num_layers)
+        tfencoder_layer = TransformerEncoderLayer(dim_feedforward, nhead, dim_feedforward // 2, dropout=tf_dropout, activation='gelu', batch_first=True)
+        self.tfencoder = TransformerEncoder(tfencoder_layer, num_layers)
 
     def forward(self, src, src_key_padding_mask):
         src = self.pos_encoder(src)
         output, hidden_list = self.tfencoder(src, mask=None, src_key_padding_mask=src_key_padding_mask)
-        return output
+        return output, hidden_list
 
 
 class UniEncoder(nn.Module):
@@ -135,28 +133,62 @@ class UniEncoder(nn.Module):
             self.model = BertModel.from_pretrained(pretrained, config=self.model_config)
             # self.projector = FeatureProjector(fea_size, dim_feedforward)
 
-        self.adapter = MixDomainAdapter(up_prj=dim_feedforward, down_prj=dim_feedforward // 2)
+        adapter_layer = MixDomainAdapter(up_prj=dim_feedforward, down_prj=dim_feedforward // 2)
+        self.adapters = self._get_clones(adapter_layer, 4 if m == "T" else 3)
+        self.layernorm = nn.LayerNorm(dim_feedforward)
 
     def forward(self, inputs, key_padding_mask):
         if self.m in "VA":
-            x = self.tfencoder(inputs, src_key_padding_mask=key_padding_mask)
-            hidden_state = self.layernorm(x)
-            mean_state = torch.mean(x, dim=-2)
-            return hidden_state, mean_state
+            tf_last_hidden_state, tf_hidden_state_list = self.tfencoder(inputs, src_key_padding_mask=key_padding_mask)
+
+            # TransformerEncoder提取的领域知识
+            tf_last_hidden_state = self.layernorm(tf_last_hidden_state)
+            spci_know = torch.mean(tf_last_hidden_state, dim=-2)
+
+            # Adapter进行知识注入后学习泛知识
+            for n, adapter in enumerate(self.adapters):
+                if n == 0:
+                    data = tf_hidden_state_list[n] + tf_hidden_state_list[n+1]
+                    data = self.layernorm(data)
+                else:
+                    data = data + tf_hidden_state_list[n+1]
+                    data = self.layernorm(data)
+                data = adapter(data, key_padding_mask)
+            domain_know = torch.mean(data, dim=-2)
+
+            # 对不同知识进行整合
+            output = torch.cat([spci_know, domain_know], dim=-1)
+            return output
         else:
             input_ids, input_mask, segment_ids = inputs[:, 0, :].long(), inputs[:, 1, :].float(), inputs[:, 2, :].long()    # 更换原始文本，使用tokenizer
-            last_hidden_states = self.model(
+            hidden_states = self.model(
                 input_ids=input_ids,
                 attention_mask=input_mask,
                 token_type_ids=segment_ids
             )  # type: ignore # Models outputs are now tuples
-            hidden_state = last_hidden_states[0]
-            cls_token = hidden_state[:, 0, :]
-            # hidden_text = self.projector(hidden_text)
-            return hidden_state, cls_token
+            last_hidden_state, hidden_state_list = hidden_states['last_hidden_state'], hidden_states['hidden_states']
 
-    def get_tokenizer(self):
+            # CLS保留领域知识
+            spci_know = last_hidden_state[:, 0, :]      # 获得CLS-token信息
+
+            # Adapter学习泛知识     在BERT的 3 6 9 11 层进行操作
+            for n, adapter in zip([3, 6, 9, 11], self.adapters):
+                if n == 3:
+                    data = hidden_state_list[0] + hidden_state_list[n]
+                else:
+                    data = data + hidden_state_list[n]
+                data = adapter(data, input_mask)
+            domain_know = torch.mean(data, dim=-2)
+
+            # 对不同知识进行整合
+            output = torch.cat([spci_know, domain_know], dim=-1)
+            return output
+
+    def _get_tokenizer(self):
         return self.tokenizer
+
+    def _get_clones(self, module, N):
+        return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
 class UniPretrain(nn.Module):
@@ -173,10 +205,10 @@ class UniPretrain(nn.Module):
             num_patches=num_patches,
             nhead=8,
             dim_feedforward=proj_fea_dim,
-            num_layers=2
+            num_layers=4
         )
         self.decoder = Classifier(
-            input_size=proj_fea_dim,
+            input_size=proj_fea_dim * 2,
             hidden_size=[int(proj_fea_dim / 2), int(proj_fea_dim / 4), int(proj_fea_dim / 8)],
             output_size=1,
             drop_out=drop_out
@@ -184,9 +216,9 @@ class UniPretrain(nn.Module):
 
     def forward(self, uni_fea):
         uni_fea, key_padding_mask = uni_fea[self.m], uni_fea["mask"][self.m]
-        hidden_state, sentence_state = self.encoder(uni_fea, key_padding_mask)
-        pred = self.decoder(sentence_state)
-        return hidden_state, pred
+        uni_output = self.encoder(uni_fea, key_padding_mask)
+        uni_pred = self.decoder(uni_output)
+        return uni_pred
 
 
 class UnimodalEncoder(nn.Module):

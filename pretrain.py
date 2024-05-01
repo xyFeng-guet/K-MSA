@@ -63,7 +63,7 @@ def train(modality, model, device, train_loader, optimizer, loss_fn, epoch, metr
         label = label.view(-1, 1)
         batchsize = inputs['V'].shape[0]
 
-        hidden, output = model(inputs)
+        output = model(inputs)
         loss = loss_fn(output, label)
         losses.update(loss.item(), batchsize)
         loss.backward()
@@ -109,7 +109,7 @@ def evaluate(modality, model, device, eval_loader, optimizer, loss_fn, epoch, me
             label = label.view(-1, 1)
             batchsize = inputs['V'].shape[0]
 
-            hidden, output = model(inputs)
+            output = model(inputs)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
@@ -151,7 +151,7 @@ def test(modality, model, device, test_loader, optimizer, loss_fn, epoch, metric
             label = label.view(-1, 1)
             batchsize = inputs['V'].shape[0]
 
-            hidden, output = model(inputs)
+            output = model(inputs)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
