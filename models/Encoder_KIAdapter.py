@@ -22,6 +22,7 @@ class Classifier(nn.Module):
         self.dropout = nn.Dropout(p=drop_out)
 
     def forward(self, x):
+        x = torch.mean(x, dim=-2)
         x = self.dropout(x)
         output = self.MLP(x)
         return output
@@ -126,7 +127,6 @@ class UniEncoder(nn.Module):
                 dim_feedforward=dim_feedforward,
                 num_layers=num_layers
             )
-            self.layernorm = nn.LayerNorm(dim_feedforward)
         else:
             self.model_config = BertConfig.from_pretrained(pretrained, output_hidden_states=True)
             self.tokenizer = BertTokenizer.from_pretrained(pretrained, do_lower_case=True)
@@ -142,8 +142,7 @@ class UniEncoder(nn.Module):
             tf_last_hidden_state, tf_hidden_state_list = self.tfencoder(inputs, src_key_padding_mask=key_padding_mask)
 
             # TransformerEncoder提取的领域知识
-            tf_last_hidden_state = self.layernorm(tf_last_hidden_state)
-            spci_know = torch.mean(tf_last_hidden_state, dim=-2)
+            spci_know = self.layernorm(tf_last_hidden_state)
 
             # Adapter进行知识注入后学习泛知识
             for n, adapter in enumerate(self.adapters):
@@ -154,7 +153,7 @@ class UniEncoder(nn.Module):
                     data = data + tf_hidden_state_list[n+1]
                     data = self.layernorm(data)
                 data = adapter(data, key_padding_mask)
-            domain_know = torch.mean(data, dim=-2)
+            domain_know = data
 
             # 对不同知识进行整合
             output = torch.cat([spci_know, domain_know], dim=-1)
@@ -169,16 +168,25 @@ class UniEncoder(nn.Module):
             last_hidden_state, hidden_state_list = hidden_states['last_hidden_state'], hidden_states['hidden_states']
 
             # CLS保留领域知识
-            spci_know = last_hidden_state[:, 0, :]      # 获得CLS-token信息
+            spci_know = last_hidden_state
+            # spci_know = last_hidden_state[:, 0, :]      # 获得CLS-token信息
+
+            # 更新BERT mask矩阵
+            for sen in input_mask:
+                mask = [not bool(item) for item in sen]
+                key_padding_mask.append(mask)
+            key_padding_mask = torch.tensor(key_padding_mask).cuda()
 
             # Adapter学习泛知识     在BERT的 3 6 9 11 层进行操作
             for n, adapter in zip([3, 6, 9, 11], self.adapters):
                 if n == 3:
                     data = hidden_state_list[0] + hidden_state_list[n]
+                    data = self.layernorm(data)
                 else:
                     data = data + hidden_state_list[n]
-                data = adapter(data, input_mask)
-            domain_know = torch.mean(data, dim=-2)
+                    data = self.layernorm(data)
+                data = adapter(data, key_padding_mask)
+            domain_know = data
 
             # 对不同知识进行整合
             output = torch.cat([spci_know, domain_know], dim=-1)
@@ -192,7 +200,7 @@ class UniEncoder(nn.Module):
 
 
 class UniPretrain(nn.Module):
-    def __init__(self, modality, num_patches, pretrained='./BERT/bert-base-chinese', fea_size=709, proj_fea_dim=128, drop_out=0.1):
+    def __init__(self, modality, num_patches, pretrained='./BERT/bert-base-chinese', fea_size=709, proj_fea_dim=128, drop_out=0.):
         super(UniPretrain, self).__init__()
         self.m = modality
         if modality == "T":
@@ -216,9 +224,9 @@ class UniPretrain(nn.Module):
 
     def forward(self, uni_fea):
         uni_fea, key_padding_mask = uni_fea[self.m], uni_fea["mask"][self.m]
-        uni_output = self.encoder(uni_fea, key_padding_mask)
-        uni_pred = self.decoder(uni_output)
-        return uni_pred
+        uni_hidden = self.encoder(uni_fea, key_padding_mask)        # [B, L, H]
+        uni_pred = self.decoder(uni_hidden)     # [B, 1]
+        return uni_hidden, uni_pred
 
 
 class UnimodalEncoder(nn.Module):
@@ -229,14 +237,14 @@ class UnimodalEncoder(nn.Module):
         # self.len_align_a = nn.Linear(300, 50, bias=True)
 
         # All Encoders of Each Modality
-        self.enc_t = UniPretrain(modality="T", pretrained=bert_pretrained, num_patches=50, proj_fea_dim=768)
-        self.enc_v = UniPretrain(modality="V", num_patches=50, fea_size=20)
-        self.enc_a = UniPretrain(modality="A", num_patches=50, fea_size=5)
+        self.enc_t = UniPretrain(modality="T", pretrained=bert_pretrained, num_patches=39, proj_fea_dim=768)
+        self.enc_v = UniPretrain(modality="V", num_patches=55, fea_size=709)
+        self.enc_a = UniPretrain(modality="A", num_patches=400, fea_size=33)
 
     def forward(self, inputs_data_mask):
         # Encoder Part
-        hidden_t, uni_T = self.enc_t(inputs_data_mask)
-        hidden_v, uni_V = self.enc_v(inputs_data_mask)
-        hidden_a, uni_A = self.enc_a(inputs_data_mask)
+        hidden_t, uni_T_pre = self.enc_t(inputs_data_mask)
+        hidden_v, uni_V_pre = self.enc_v(inputs_data_mask)
+        hidden_a, uni_A_pre = self.enc_a(inputs_data_mask)
 
-        return [hidden_t, hidden_v, hidden_a], []
+        return [hidden_t, hidden_v, hidden_a], [uni_T_pre, uni_V_pre, uni_A_pre]

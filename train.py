@@ -26,6 +26,11 @@ def main(parse_args):
 
     setup_seed(opt.seed)
     model = build_model(opt).to(device)
+    model.preprocess_model(pretrain_path={
+        'T': "/opt/data/private/K-MSA/pretrainedModel/SIMS_T_MAE-0.287_Corr-0.747.pth",
+        'V': "/opt/data/private/K-MSA/pretrainedModel/SIMS_V_MAE-0.509_Corr-0.548.pth",
+        'A': "/opt/data/private/K-MSA/pretrainedModel/SIMS_A_MAE-0.562_Corr-0.182.pth"
+    })      # 加载预训练权重并冻结参数
     dataLoader = MMDataLoader(opt)
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -35,7 +40,7 @@ def main(parse_args):
 
     loss_fn = torch.nn.MSELoss()
     metrics = MetricsTop().getMetics(opt.datasetName)
-    scheduler_warmup = get_scheduler(optimizer, opt)
+    scheduler_warmup = get_scheduler(optimizer, opt.n_epochs)
 
     for epoch in range(1, opt.n_epochs+1):
         train_results = train(model, dataLoader['train'], optimizer, loss_fn, epoch, metrics)
@@ -59,7 +64,7 @@ def train(model, train_loader, optimizer, loss_fn, epoch, metrics):
             'mask': {
                 'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
                 'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device),
-                'T': None
+                'T': []
             }
         }
         label = data['labels']['M'].to(device)
@@ -106,7 +111,7 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, metrics):
                 'mask': {
                     'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
                     'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device),
-                    'T': None
+                    'T': []
                 }
             }
             label = data['labels']['M'].to(device)
@@ -148,7 +153,7 @@ def test(model, test_loader, optimizer, loss_fn, epoch, metrics):
                 'mask': {
                     'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
                     'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device),
-                    'T': None
+                    'T': []
                 }
             }
             label = data['labels']['M'].to(device)
@@ -180,4 +185,5 @@ if __name__ == '__main__':
 
 '''
 test: {'Has0_acc_2': 0.8382, 'Has0_F1_score': 0.8402, 'Non0_acc_2': 0.8613, 'Non0_F1_score': 0.8624, 'Mult_acc_5': 0.5262, 'Mult_acc_7': 0.4606, 'MAE': 0.7066, 'Corr': 0.7899}
+| Test    | 0.4078 | 0.608  |  0.7746 |  0.6718 |  0.4136 | 0.7697 |
 '''

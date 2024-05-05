@@ -25,7 +25,7 @@ def parse_opts():
                         help='random seed')
     parser.add_argument('--batch_size', type=int, default=128,
                         help='')
-    parser.add_argument('--n_epochs', type=int, default=300,
+    parser.add_argument('--n_epochs', type=list, default=[30, 200, 200],
                         help='epoch number for training')
     parser.add_argument('--num_workers', type=int, default=8,
                         help='')
@@ -56,7 +56,7 @@ def train(modality, model, device, train_loader, optimizer, loss_fn, epoch, metr
             'mask': {
                 'V': data['vision_padding_mask'].to(device),
                 'A': data['audio_padding_mask'].to(device),
-                'T': None
+                'T': []
             }
         }
         label = data['labels'][modality].to(device)
@@ -102,7 +102,7 @@ def evaluate(modality, model, device, eval_loader, optimizer, loss_fn, epoch, me
                 'mask': {
                     'V': data['vision_padding_mask'].to(device),
                     'A': data['audio_padding_mask'].to(device),
-                    'T': None
+                    'T': []
                 }
             }
             label = data['labels'][modality].to(device)
@@ -144,7 +144,7 @@ def test(modality, model, device, test_loader, optimizer, loss_fn, epoch, metric
                 'mask': {
                     'V': data['vision_padding_mask'].to(device),
                     'A': data['audio_padding_mask'].to(device),
-                    'T': None
+                    'T': []
                 }
             }
             label = data['labels'][modality].to(device)
@@ -186,9 +186,9 @@ def main(i, modality):
 
     loss_fn = torch.nn.MSELoss()
     metrics = MetricsTop().getMetics(opt.datasetName)
-    scheduler_warmup = get_scheduler(optimizer, opt)
+    scheduler_warmup = get_scheduler(optimizer, opt.n_epochs[i])
 
-    for epoch in range(1, opt.n_epochs+1):
+    for epoch in range(1, opt.n_epochs[i]+1):
         train_results = train(modality, model, device, dataLoader['train'], optimizer, loss_fn, epoch, metrics)
         valid_results = evaluate(modality, model, device, dataLoader['valid'], optimizer, loss_fn, epoch, metrics)
         test_results = test(modality, model, device, dataLoader['test'], optimizer, loss_fn, epoch, metrics)

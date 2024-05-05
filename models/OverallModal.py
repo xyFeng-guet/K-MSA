@@ -11,7 +11,7 @@ class KMSA(nn.Module):
         self.UniEncKI = UnimodalEncoder(opt, bert_pretrained)
 
         # Multimodal Fusion
-        self.DyMultiFus = DyRoutTrans(opt)
+        # self.DyMultiFus = DyRoutTrans(opt)
 
         # Output Classification for Sentiment Analysis
         self.CLS = SentiCLS(opt)
@@ -28,10 +28,18 @@ class KMSA(nn.Module):
 
         return prediction
 
-    def preprocess_model(self):
+    def preprocess_model(self, pretrain_path):
         # 加载预训练模型
+        ckpt_t = torch.load(pretrain_path['T'])
+        self.UniEncKI.enc_t.load_state_dict(ckpt_t)
+        ckpt_v = torch.load(pretrain_path['V'])
+        self.UniEncKI.enc_v.load_state_dict(ckpt_v)
+        ckpt_a = torch.load(pretrain_path['A'])
+        self.UniEncKI.enc_a.load_state_dict(ckpt_a)
         # 冻结外部知识注入参数
-        pass
+        for name, parameter in self.UniEncKI.named_parameters():
+            if 'adapter' in name:
+                parameter.requires_grad = False
 
 
 def build_model(opt):

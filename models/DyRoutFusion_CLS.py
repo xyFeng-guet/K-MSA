@@ -5,6 +5,7 @@ from torch import nn
 import torch.nn.functional as F
 
 
+# 重点更改动态路由融合
 class SARoutingBlock(nn.Module):
     """
     Self-Attention Routing Block
@@ -98,6 +99,33 @@ class SARoutingBlock(nn.Module):
         return out
 
 
+class LayerNorm(nn.Module):
+    def __init__(self, size, eps=1e-6):
+        super(LayerNorm, self).__init__()
+        self.eps = eps
+        self.a = nn.Parameter(torch.ones(size))
+        self.b = nn.Parameter(torch.zeros(size))
+
+    def forward(self, x):
+        mean = x.mean(-1, keepdim=True)
+        std = x.std(-1, keepdim=True)
+        return self.a * (x - mean) / (std + self.eps) + self.b
+
+
+class FFN(nn.Module):
+    def __init__(self, opt):
+        super(FFN, self).__init__()
+        self.fc = nn.Sequential(
+            nn.Linear(opt["hidden_size"], opt["hidden_size"]),
+            nn.ReLU(inplace=True),
+            nn.Dropout(opt["dropout"])
+        )
+        self.linear = nn.Linear(opt["ffn_size"], opt["hidden_size"])
+
+    def forward(self, x):
+        return self.linear(self.fc(x))
+
+
 class MHAtt(nn.Module):
     def __init__(self, opt):
         super(MHAtt, self).__init__()
@@ -160,33 +188,6 @@ class MHAtt(nn.Module):
         return torch.matmul(att_map, value)
 
 
-class FFN(nn.Module):
-    def __init__(self, opt):
-        super(FFN, self).__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(opt["hidden_size"], opt["hidden_size"]),
-            nn.ReLU(inplace=True),
-            nn.Dropout(opt["dropout"])
-        )
-        self.linear = nn.Linear(opt["ffn_size"], opt["hidden_size"])
-
-    def forward(self, x):
-        return self.linear(self.fc(x))
-
-
-class LayerNorm(nn.Module):
-    def __init__(self, size, eps=1e-6):
-        super(LayerNorm, self).__init__()
-        self.eps = eps
-        self.a = nn.Parameter(torch.ones(size))
-        self.b = nn.Parameter(torch.zeros(size))
-
-    def forward(self, x):
-        mean = x.mean(-1, keepdim=True)
-        std = x.std(-1, keepdim=True)
-        return self.a * (x - mean) / (std + self.eps) + self.b
-
-
 class multiTRAR_SA_block(nn.Module):
     def __init__(self, opt):
         super(multiTRAR_SA_block, self).__init__()
@@ -240,7 +241,6 @@ class DyRoutTrans(nn.Module):
             LayerNorm(opt["hidden_size"]),
             nn.Linear(opt["hidden_size"], opt["output_size"])
         )
-        # self.fusion_layer = CrossTransformer(source_num_frames=8, tgt_num_frames=8, dim=128, depth=fusion_layer_depth, heads=8, mlp_dim=128)
 
     def forward(self, lang_feat, img_feat, inputs, unimodal_senti):
         lang_feat_mask = inputs[self.input3].unsqueeze(1).unsqueeze(2)
@@ -262,13 +262,21 @@ class DyRoutTrans(nn.Module):
 class SentiCLS(nn.Module):
     def __init__(self, opt):
         super(SentiCLS, self).__init__()
-        self.fusion_layer = nn.Sequential(
-            nn.Linear(768 + 256 * 2, 256, bias=True),
+        self.fuse_layer = nn.Sequential(
+            nn.Linear((768 + 128 * 2) * 2, (768 + 128 * 2) * 2, bias=True),
             nn.ReLU(),
-            nn.Linear(256, 64, bias=True),
-            nn.ReLU(),
-            nn.Linear(64, 1, bias=True)
+            nn.Linear((768 + 128 * 2) * 2, (768 + 128 * 2) * 2, bias=True),
+            nn.Sigmoid()
         )
+        self.cls_layer = nn.Sequential(
+            nn.Linear((768 + 128 * 2) * 2, 512, bias=True),
+            nn.ReLU(),
+            nn.Linear(512, 128, bias=True),
+            nn.ReLU(),
+            nn.Linear(128, 1, bias=True)
+        )
+
+        self.layernorm = nn.LayerNorm((768 + 128 * 2) * 2)
 
     def forward(self, hidden_text, hidden_video, hidden_acoustic):
         h_t_global = hidden_text[:, 0, :]   # torch.mean(hidden_text, dim=1)
@@ -276,7 +284,8 @@ class SentiCLS(nn.Module):
         h_a_global = torch.mean(hidden_acoustic, dim=1)
 
         fusion_features = torch.cat((h_t_global, h_v_global, h_a_global), dim=-1)
-        output = self.fusion_layer(fusion_features)
+        fusion_features = self.layernorm(fusion_features + self.fuse_layer(fusion_features))
+        output = self.cls_layer(fusion_features)
 
         return output
 
