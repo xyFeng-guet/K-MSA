@@ -7,55 +7,39 @@ import torch.nn.functional as F
 
 # 重点更改动态路由融合
 class SARoutingBlock(nn.Module):
-    """
-    Self-Attention Routing Block
+    """Self-Attention Routing Block
     """
     def __init__(self, opt):
         super(SARoutingBlock, self).__init__()
         self.opt = opt
+        self.linear_v = nn.Linear(opt.hidden_size, opt.hidden_size)
+        self.linear_k = nn.Linear(opt.hidden_size, opt.hidden_size)
+        self.linear_q = nn.Linear(opt.hidden_size, opt.hidden_size)
+        self.linear_merge = nn.Linear(opt.hidden_size, opt.hidden_size)
+        self.dropout = nn.Dropout(opt.dropout)
 
-        self.linear_v = nn.Linear(opt["hidden_size"], opt["hidden_size"])
-        self.linear_k = nn.Linear(opt["hidden_size"], opt["hidden_size"])
-        self.linear_q = nn.Linear(opt["hidden_size"], opt["hidden_size"])
-        self.linear_merge = nn.Linear(opt["hidden_size"], opt["hidden_size"])
-        if opt["routing"] == 'hard':
-            self.routing_block = HardRoutingBlock(opt["hidden_size"], opt["orders"], opt["pooling"])
-        elif opt["routing"] == 'soft':
-            self.routing_block = SoftRoutingBlock(opt["hidden_size"], opt["orders"], opt["pooling"])
-        elif opt["routing"] == 'mean':
-            self.routing_block = mean_Block(opt["hidden_size"], opt["orders"])
-
-        self.dropout = nn.Dropout(opt["dropout"])
-
-    def forward(self, v, k, q, masks, tau, training):
+    def forward(self, q, k, v, masks):
         n_batches = q.size(0)
-        x = v
-
-        alphas = self.routing_block(x, tau, masks)      # (bs, 4)
-
-        if self.opt["BINARIZE"]:
-            if not training:
-                alphas = self.argmax_binarize(alphas)
 
         v = self.linear_v(v).view(
             n_batches,
             -1,
             self.opt["multihead"],
-            int(self.opt["hidden_size"] / self.opt["multihead"])
+            int(self.opt.hidden_size / self.opt["multihead"])
         ).transpose(1, 2)       # (bs, 4, 49, 192)
 
         k = self.linear_k(k).view(
             n_batches,
             -1,
             self.opt["multihead"],
-            int(self.opt["hidden_size"] / self.opt["multihead"])
+            int(self.opt.hidden_size / self.opt["multihead"])
         ).transpose(1, 2)       # (bs, 4, 49, 192)
 
         q = self.linear_q(q).view(
             n_batches,
             -1,
             self.opt["multihead"],
-            int(self.opt["hidden_size"] / self.opt["multihead"])
+            int(self.opt.hidden_size / self.opt["multihead"])
         ).transpose(1, 2)       # (bs, 4, 49, 192)
 
         att_list = self.routing_att(v, k, q, masks)     # (bs, order_num, head_num, grid_num, grid_num) (bs, 4, 4, 49, 49)
@@ -66,7 +50,7 @@ class SARoutingBlock(nn.Module):
         atted = atted.transpose(1, 2).contiguous().view(
             n_batches,
             -1,
-            self.opt["hidden_size"]
+            self.opt.hidden_size
         )       # (bs, 49, 768)
 
         atted = self.linear_merge(atted)        # (bs, 4, 768)
@@ -91,36 +75,16 @@ class SARoutingBlock(nn.Module):
 
         return att_list
 
-    def argmax_binarize(self, alphas):
-        n = alphas.size()[0]
-        out = torch.zeros_like(alphas)
-        indexes = alphas.argmax(-1)
-        out[torch.arange(n), indexes] = 1
-        return out
-
-
-class LayerNorm(nn.Module):
-    def __init__(self, size, eps=1e-6):
-        super(LayerNorm, self).__init__()
-        self.eps = eps
-        self.a = nn.Parameter(torch.ones(size))
-        self.b = nn.Parameter(torch.zeros(size))
-
-    def forward(self, x):
-        mean = x.mean(-1, keepdim=True)
-        std = x.std(-1, keepdim=True)
-        return self.a * (x - mean) / (std + self.eps) + self.b
-
 
 class FFN(nn.Module):
     def __init__(self, opt):
         super(FFN, self).__init__()
         self.fc = nn.Sequential(
-            nn.Linear(opt["hidden_size"], opt["hidden_size"]),
+            nn.Linear(opt.hidden_size, opt.ffn_size),
             nn.ReLU(inplace=True),
-            nn.Dropout(opt["dropout"])
+            nn.Dropout(opt.dropout)
         )
-        self.linear = nn.Linear(opt["ffn_size"], opt["hidden_size"])
+        self.linear = nn.Linear(opt.ffn_size, opt.hidden_size)
 
     def forward(self, x):
         return self.linear(self.fc(x))
@@ -131,12 +95,12 @@ class MHAtt(nn.Module):
         super(MHAtt, self).__init__()
         self.opt = opt
 
-        self.linear_v = nn.Linear(opt["hidden_size"], opt["hidden_size"])
-        self.linear_k = nn.Linear(opt["hidden_size"], opt["hidden_size"])
-        self.linear_q = nn.Linear(opt["hidden_size"], opt["hidden_size"])
-        self.linear_merge = nn.Linear(opt["hidden_size"], opt["hidden_size"])
+        self.linear_v = nn.Linear(opt.hidden_size, opt.hidden_size)
+        self.linear_k = nn.Linear(opt.hidden_size, opt.hidden_size)
+        self.linear_q = nn.Linear(opt.hidden_size, opt.hidden_size)
+        self.linear_merge = nn.Linear(opt.hidden_size, opt.hidden_size)
 
-        self.dropout = nn.Dropout(opt["dropout"])
+        self.dropout = nn.Dropout(opt.dropout)
 
     def forward(self, v, k, q, mask):
         n_batches = q.size(0)
@@ -145,28 +109,28 @@ class MHAtt(nn.Module):
             n_batches,
             -1,
             self.opt["multihead"],
-            int(self.opt["hidden_size"] / self.opt["multihead"])
+            int(self.opt.hidden_size / self.opt["multihead"])
         ).transpose(1, 2)
 
         k = self.linear_k(k).view(
             n_batches,
             -1,
             self.opt["multihead"],
-            int(self.opt["hidden_size"] / self.opt["multihead"])
+            int(self.opt.hidden_size / self.opt["multihead"])
         ).transpose(1, 2)
 
         q = self.linear_q(q).view(
             n_batches,
             -1,
             self.opt["multihead"],
-            int(self.opt["hidden_size"] / self.opt["multihead"])
+            int(self.opt.hidden_size / self.opt["multihead"])
         ).transpose(1, 2)
 
         atted = self.att(v, k, q, mask)
         atted = atted.transpose(1, 2).contiguous().view(
             n_batches,
             -1,
-            self.opt["hidden_size"]
+            self.opt.hidden_size
         )
 
         atted = self.linear_merge(atted)
@@ -191,72 +155,46 @@ class MHAtt(nn.Module):
 class multiTRAR_SA_block(nn.Module):
     def __init__(self, opt):
         super(multiTRAR_SA_block, self).__init__()
-        self.mhatt1 = SARoutingBlock(opt)
+        # self.mhatt1 = SARoutingBlock(opt)
         self.mhatt2 = MHAtt(opt)
         self.ffn = FFN(opt)
 
-        self.dropout1 = nn.Dropout(opt["dropout"])
-        self.norm1 = LayerNorm(opt["hidden_size"])
+        self.dropout1 = nn.Dropout(opt.dropout)
+        self.norm1 = nn.LayerNorm(opt.hidden_size, eps=1e-6)
 
-        self.dropout2 = nn.Dropout(opt["dropout"])
-        self.norm2 = LayerNorm(opt["hidden_size"])
+        self.dropout2 = nn.Dropout(opt.dropout)
+        self.norm2 = nn.LayerNorm(opt.hidden_size, eps=1e-6)
 
-        self.dropout3 = nn.Dropout(opt["dropout"])
-        self.norm3 = LayerNorm(opt["hidden_size"])
+        self.dropout3 = nn.Dropout(opt.dropout)
+        self.norm3 = nn.LayerNorm(opt.hidden_size, eps=1e-6)
 
-    def forward(self, x, y, x_mask, y_masks, tau, training):
-        x = self.norm1(x + self.dropout1(self.mhatt1(v=y, k=y, q=x, masks=y_masks, tau=tau, training=training)))
+    def forward(self, x, y, x_mask, y_masks):
+        x = self.norm1(x + self.dropout1(self.mhatt1(v=y, k=y, q=x, masks=y_masks)))
         x = self.norm2(x + self.dropout2(self.mhatt2(v=x, k=x, q=x, mask=x_mask)))
         x = self.norm3(x + self.dropout3(self.ffn(x)))
         return x
-
-
-class DynRT_E(nn.Module):
-    def __init__(self, opt):
-        super(DynRT_E, self).__init__()
-        self.opt = opt
-        self.tau = opt["tau_max"]
-        opt_list = []
-        for i in range(opt["layer"]):
-            opt_copy = copy.deepcopy(opt)
-            opt_copy["ORDERS"] = opt["ORDERS"][:len(opt["ORDERS"])-i]
-            opt_copy["orders"] = len(opt["ORDERS"])-i
-            opt_list.append(copy.deepcopy(opt_copy))
-        self.dec_list = nn.ModuleList([multiTRAR_SA_block(opt_list[-(i+1)]) for i in range(opt["layer"])])
-
-    def forward(self, y, x, y_mask, x_mask):
-        # y text (bs, max_len, dim) x img (bs, gird_num, dim) y_mask (bs, 1, 1, max_len) x_mask (bs, 1, 1, grid_num)
-        # Input encoder last hidden vector and obtain decoder last hidden vectors
-        for i, dec in enumerate(self.dec_list):
-            y = dec(x, y, x_mask, y_mask, self.tau, self.training)   # (4, 360, 768)
-        return y, x
 
 
 class DyRoutTrans(nn.Module):
     def __init__(self, opt):
         super(DyRoutTrans, self).__init__()
         self.opt = opt
-        self.multifuse = DynRT_E(opt)
-        self.cls_layer = nn.Sequential(
-            LayerNorm(opt["hidden_size"]),
-            nn.Linear(opt["hidden_size"], opt["output_size"])
-        )
+        fusion_block = multiTRAR_SA_block(opt)
+        self.dec_list = self._get_clones(fusion_block, 4)
 
-    def forward(self, lang_feat, img_feat, inputs, unimodal_senti):
-        lang_feat_mask = inputs[self.input3].unsqueeze(1).unsqueeze(2)
-        img_feat_mask = torch.zeros([img_feat.shape[0], 1, 1, img_feat.shape[1]], dtype=torch.bool, device=img_feat.device)     # (bs, 1, 1, grid_num)
-        lang_feat, img_feat = self.multifuse(
-            lang_feat,
-            img_feat,
-            lang_feat_mask,
-            img_feat_mask
-        )
+        # Length Align
+        self.len_t = nn.Linear(opt.seq_len, 39)
+        self.len_v = nn.Linear(opt.seq_len, 39)
+        self.len_a = nn.Linear(opt.seq_len, 39)
 
-        lang_emb = torch.mean(lang_feat, dim=1)
-        img_emb = torch.mean(img_feat, dim=1)
-        result = self.cls_layer(lang_emb + img_emb)
+    def forward(self, uni_fea, uni_mask, uni_senti):
+        # y text (bs, max_len, dim) x img (bs, gird_num, dim) y_mask (bs, 1, 1, max_len) x_mask (bs, 1, 1, grid_num)
+        for i, dec in enumerate(self.dec_list):
+            fuse_fea = dec(uni_fea, fuse_fea, uni_mask, uni_senti)   # (4, 360, 768)
+        return y, x
 
-        return lang_emb, img_emb, result
+    def _get_clones(self, module, N):
+        return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
 
 
 class SentiCLS(nn.Module):
@@ -288,57 +226,3 @@ class SentiCLS(nn.Module):
         output = self.cls_layer(fusion_features)
 
         return output
-
-
-'''
-# class CrossTransformerEncoder(nn.Module):
-#     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout=0.):
-#         super().__init__()
-#         self.layers = nn.ModuleList([])
-#         for _ in range(depth):
-#             self.layers.append(nn.ModuleList([
-#                 PreNormAttention(dim, Attention(dim, heads=heads, dim_head=dim_head, dropout=dropout)),
-#                 PreNormForward(dim, FeedForward(dim, mlp_dim, dropout=dropout))
-#             ]))
-
-#     def forward(self, source_x, target_x):
-#         for attn, ff in self.layers:
-#             target_x_tmp = attn(target_x, source_x, source_x)
-#             target_x = target_x_tmp + target_x
-#             target_x = ff(target_x) + target_x
-#         return target_x
-
-
-# class CrossTransformer(nn.Module):
-#     def __init__(self, *, source_num_frames, tgt_num_frames, dim, depth, heads, mlp_dim, pool='cls', dim_head=64, dropout=0., emb_dropout=0.):
-#         super().__init__()
-
-#         self.pos_embedding_s = nn.Parameter(torch.randn(1, source_num_frames + 1, dim))
-#         self.pos_embedding_t = nn.Parameter(torch.randn(1, tgt_num_frames + 1, dim))
-#         self.extra_token = nn.Parameter(torch.zeros(1, 1, dim))
-
-#         self.dropout = nn.Dropout(emb_dropout)
-
-#         self.CrossTransformerEncoder = CrossTransformerEncoder(dim, depth, heads, dim_head, mlp_dim, dropout)
-
-#         self.pool = pool
-
-#     def forward(self, source_x, target_x):
-#         b, n_s, _ = source_x.shape
-#         b, n_t, _ = target_x.shape
-
-#         extra_token = repeat(self.extra_token, '1 1 d -> b 1 d', b=b)
-
-#         source_x = torch.cat((extra_token, source_x), dim=1)
-#         source_x = source_x + self.pos_embedding_s[:, : n_s+1]
-
-#         target_x = torch.cat((extra_token, target_x), dim=1)
-#         target_x = target_x + self.pos_embedding_t[:, : n_t+1]
-
-#         source_x = self.dropout(source_x)
-#         target_x = self.dropout(target_x)
-
-#         x_s2t = self.CrossTransformerEncoder(source_x, target_x)
-
-#         return x_s2t
-'''

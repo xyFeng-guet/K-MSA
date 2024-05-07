@@ -11,20 +11,21 @@ class KMSA(nn.Module):
         self.UniEncKI = UnimodalEncoder(opt, bert_pretrained)
 
         # Multimodal Fusion
-        # self.DyMultiFus = DyRoutTrans(opt)
+        self.DyMultiFus = DyRoutTrans(opt)
 
         # Output Classification for Sentiment Analysis
         self.CLS = SentiCLS(opt)
 
     def forward(self, inputs_data_mask):
         # Unimodal Encoder & Knowledge Inject // Unimodal Sentiment Prediction
-        unimodal_features, _ = self.UniEncKI(inputs_data_mask)
+        uni_fea, uni_senti = self.UniEncKI(inputs_data_mask)    # [T, V, A]
+        uni_mask = inputs_data_mask['mask']
 
         # Dynamic Multimodal Fusion using Dynamic Route Transformer with Unimodal Sentiment Prediction
-        # multimodal_features = self.DyMultiFus(unimodal_features, _)
+        multimodal_features = self.DyMultiFus(uni_fea, uni_senti, uni_mask)
 
         # Sentiment Classification
-        prediction = self.CLS(unimodal_features[0], unimodal_features[1], unimodal_features[2])
+        prediction = self.CLS(uni_fea['T'], uni_fea['V'], uni_fea['A'])
 
         return prediction
 

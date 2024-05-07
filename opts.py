@@ -28,8 +28,17 @@ def parse_opts():
         ],
 
         'network': [
-            dict(name='--fusion_layer_depth',
-                 default=2,
+            dict(name='--fusion_layers',
+                 default=3,
+                 type=int),
+            dict(name='--dropout',
+                 default=0.5,
+                 type=float),
+            dict(name='--hidden_size',
+                 default=768,
+                 type=int),
+            dict(name='--ffn_size',
+                 default=768,
                  type=int)
         ],
 

@@ -190,7 +190,7 @@ class UniEncoder(nn.Module):
 
             # 对不同知识进行整合
             output = torch.cat([spci_know, domain_know], dim=-1)
-            return output
+            return output, key_padding_mask
 
     def _get_tokenizer(self):
         return self.tokenizer
@@ -222,9 +222,14 @@ class UniPretrain(nn.Module):
             drop_out=drop_out
         )
 
-    def forward(self, uni_fea):
-        uni_fea, key_padding_mask = uni_fea[self.m], uni_fea["mask"][self.m]
-        uni_hidden = self.encoder(uni_fea, key_padding_mask)        # [B, L, H]
+    def forward(self, inputs):
+        uni_fea, key_padding_mask = inputs[self.m], inputs["mask"][self.m]
+
+        if self.m == 'T':        # [B, L, H]
+            uni_hidden, inputs["mask"][self.m] = self.encoder(uni_fea, key_padding_mask)
+        else:
+            uni_hidden = self.encoder(uni_fea, key_padding_mask)
+
         uni_pred = self.decoder(uni_hidden)     # [B, 1]
         return uni_hidden, uni_pred
 
@@ -247,4 +252,4 @@ class UnimodalEncoder(nn.Module):
         hidden_v, uni_V_pre = self.enc_v(inputs_data_mask)
         hidden_a, uni_A_pre = self.enc_a(inputs_data_mask)
 
-        return [hidden_t, hidden_v, hidden_a], [uni_T_pre, uni_V_pre, uni_A_pre]
+        return {'T': hidden_t, 'V': hidden_v, 'A': hidden_a}, {'T': uni_T_pre, 'V': uni_V_pre, 'A': uni_A_pre}
