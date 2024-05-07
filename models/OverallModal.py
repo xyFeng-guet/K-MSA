@@ -25,7 +25,7 @@ class KMSA(nn.Module):
         multimodal_features = self.DyMultiFus(uni_fea, uni_senti, uni_mask)
 
         # Sentiment Classification
-        prediction = self.CLS(uni_fea['T'], uni_fea['V'], uni_fea['A'])
+        prediction = self.CLS(multimodal_features)     # uni_fea['T'], uni_fea['V'], uni_fea['A']
 
         return prediction
 

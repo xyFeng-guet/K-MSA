@@ -32,13 +32,13 @@ def parse_opts():
                  default=3,
                  type=int),
             dict(name='--dropout',
-                 default=0.5,
+                 default=0.4,
                  type=float),
             dict(name='--hidden_size',
-                 default=768,
+                 default=256,
                  type=int),
             dict(name='--ffn_size',
-                 default=768,
+                 default=512,
                  type=int)
         ],
 

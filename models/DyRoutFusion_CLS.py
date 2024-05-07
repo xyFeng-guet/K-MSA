@@ -1,8 +1,9 @@
 import math
 import copy
 import torch
-from torch import nn
 import torch.nn.functional as F
+from torch import nn, einsum
+from einops import rearrange
 
 
 # 重点更改动态路由融合
@@ -76,6 +77,150 @@ class SARoutingBlock(nn.Module):
         return att_list
 
 
+class FeedForward(nn.Module):
+    def __init__(self, dim, hidden_dim, dropout=0.):
+        super(FeedForward, self).__init__()
+        self.norm = nn.LayerNorm(dim)
+        self.net = nn.Sequential(
+            nn.Linear(dim, hidden_dim),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, dim),
+            nn.Dropout(dropout)
+        )
+
+    def forward(self, x):
+        x = self.norm(x)
+        return self.net(x)
+
+
+class MultiHAtten(nn.Module):
+    def __init__(self, dim, heads=8, dim_head=64, dropout=0.):
+        super(MultiHAtten, self).__init__()
+        inner_dim = dim_head * heads
+        project_out = not (heads == 1 and dim_head == dim)
+
+        self.heads = heads
+        self.scale = dim_head ** -0.5
+
+        self.norm_q = nn.LayerNorm(dim)
+        self.norm_k = nn.LayerNorm(dim)
+        self.norm_v = nn.LayerNorm(dim)
+
+        self.attend = nn.Softmax(dim=-1)
+        self.to_q = nn.Linear(dim, inner_dim, bias=False)
+        self.to_k = nn.Linear(dim, inner_dim, bias=False)
+        self.to_v = nn.Linear(dim, inner_dim, bias=False)
+
+        self.to_out = nn.Sequential(
+            nn.Linear(inner_dim, dim),
+            nn.Dropout(dropout)
+        ) if project_out else nn.Identity()
+
+    def forward(self, q, k, v):
+        # q = self.norm_q(q)
+        # k = self.norm_k(k)
+        # v = self.norm_v(v)
+
+        b, n, _, h = *q.shape, self.heads
+        q = self.to_q(q)
+        k = self.to_k(k)
+        v = self.to_v(v)
+
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h=h), (q, k, v))
+        dots = einsum('b h i d, b h j d -> b h i j', q, k) * self.scale
+
+        attn = self.attend(dots)
+
+        out = einsum('b h i j, b h j d -> b h i d', attn, v)
+        out = rearrange(out, 'b h n d -> b n (h d)')
+
+        return self.to_out(out)
+
+
+class multiTRAR_SA_block(nn.Module):
+    def __init__(self, opt):
+        super(multiTRAR_SA_block, self).__init__()
+        # self.mhatt1 = SARoutingBlock(opt)
+        self.mhatt2 = MultiHAtten(opt.hidden_size, dropout=0.3)
+        self.ffn = FeedForward(opt.hidden_size, opt.ffn_size, dropout=0.)
+
+        self.dropout1 = nn.Dropout(opt.dropout)
+        self.norm1 = nn.LayerNorm(opt.hidden_size, eps=1e-6)
+
+        self.dropout2 = nn.Dropout(opt.dropout)
+        self.norm2 = nn.LayerNorm(opt.hidden_size, eps=1e-6)
+
+        self.dropout3 = nn.Dropout(opt.dropout)
+        self.norm3 = nn.LayerNorm(opt.hidden_size, eps=1e-6)
+
+    def forward(self, i, x, mask, senti):
+        # x = self.norm1(x + self.dropout1(self.mhatt1(v=y, k=y, q=x, masks=y_masks)))
+        x = self.norm2(x + self.dropout2(self.mhatt2(q=x, k=x, v=x)))
+        x = self.norm3(x + self.dropout3(self.ffn(x)))
+        return x
+
+
+class DyRoutTrans(nn.Module):
+    def __init__(self, opt):
+        super(DyRoutTrans, self).__init__()
+        self.opt = opt
+        fusion_block = multiTRAR_SA_block(opt)
+        self.dec_list = self._get_clones(fusion_block, 3)
+
+        # Length Align
+        self.len_t = nn.Linear(opt.seq_lens[0], 39)
+        self.len_v = nn.Linear(opt.seq_lens[1]+1, 39)
+        self.len_a = nn.Linear(opt.seq_lens[2]+1, 39)
+
+        # Dimension Align
+        self.dim_t = nn.Linear(768*2, 256)
+        self.dim_v = nn.Linear(256, 256)
+        self.dim_a = nn.Linear(256, 256)
+
+        self.layernorm = nn.LayerNorm(256)
+
+    def forward(self, uni_fea, uni_mask, uni_senti):
+        # y text (bs, max_len, dim) x img (bs, gird_num, dim) y_mask (bs, 1, 1, max_len) x_mask (bs, 1, 1, grid_num)
+        hidden_t = self.len_t(self.dim_t(uni_fea['T']).permute(0, 2, 1)).permute(0, 2, 1)
+        hidden_v = self.len_v(self.dim_v(uni_fea['V']).permute(0, 2, 1)).permute(0, 2, 1)
+        hidden_a = self.len_a(self.dim_a(uni_fea['A']).permute(0, 2, 1)).permute(0, 2, 1)
+        uni_fea = self.layernorm(hidden_t + hidden_v + hidden_a)
+
+        for i, dec in enumerate(self.dec_list):
+            uni_fea = dec(i, uni_fea, uni_mask, uni_senti)   # (4, 360, 768)
+        return uni_fea
+
+    def _get_clones(self, module, N):
+        return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
+
+
+class SentiCLS(nn.Module):
+    def __init__(self, opt):
+        super(SentiCLS, self).__init__()
+        self.fuse_layer = nn.Sequential(
+            nn.Linear(256, 256, bias=True),
+            nn.ReLU(),
+            nn.Linear(256, 256, bias=True),
+            nn.Sigmoid()
+        )
+        self.cls_layer = nn.Sequential(
+            nn.Linear(256, 128, bias=True),
+            nn.ReLU(),
+            nn.Linear(128, 1, bias=True)
+        )
+
+        self.layernorm = nn.LayerNorm(256)
+
+    def forward(self, fusion_features):    # hidden_text, hidden_video, hidden_acoustic
+        fusion_features = torch.mean(fusion_features, dim=-2)
+        fusion_features = self.layernorm(fusion_features + self.fuse_layer(fusion_features))
+        output = self.cls_layer(fusion_features)
+
+        return output
+
+
+'''
 class FFN(nn.Module):
     def __init__(self, opt):
         super(FFN, self).__init__()
@@ -150,79 +295,4 @@ class MHAtt(nn.Module):
         att_map = F.softmax(scores, dim=-1)
         att_map = self.dropout(att_map)
         return torch.matmul(att_map, value)
-
-
-class multiTRAR_SA_block(nn.Module):
-    def __init__(self, opt):
-        super(multiTRAR_SA_block, self).__init__()
-        # self.mhatt1 = SARoutingBlock(opt)
-        self.mhatt2 = MHAtt(opt)
-        self.ffn = FFN(opt)
-
-        self.dropout1 = nn.Dropout(opt.dropout)
-        self.norm1 = nn.LayerNorm(opt.hidden_size, eps=1e-6)
-
-        self.dropout2 = nn.Dropout(opt.dropout)
-        self.norm2 = nn.LayerNorm(opt.hidden_size, eps=1e-6)
-
-        self.dropout3 = nn.Dropout(opt.dropout)
-        self.norm3 = nn.LayerNorm(opt.hidden_size, eps=1e-6)
-
-    def forward(self, x, y, x_mask, y_masks):
-        x = self.norm1(x + self.dropout1(self.mhatt1(v=y, k=y, q=x, masks=y_masks)))
-        x = self.norm2(x + self.dropout2(self.mhatt2(v=x, k=x, q=x, mask=x_mask)))
-        x = self.norm3(x + self.dropout3(self.ffn(x)))
-        return x
-
-
-class DyRoutTrans(nn.Module):
-    def __init__(self, opt):
-        super(DyRoutTrans, self).__init__()
-        self.opt = opt
-        fusion_block = multiTRAR_SA_block(opt)
-        self.dec_list = self._get_clones(fusion_block, 4)
-
-        # Length Align
-        self.len_t = nn.Linear(opt.seq_len, 39)
-        self.len_v = nn.Linear(opt.seq_len, 39)
-        self.len_a = nn.Linear(opt.seq_len, 39)
-
-    def forward(self, uni_fea, uni_mask, uni_senti):
-        # y text (bs, max_len, dim) x img (bs, gird_num, dim) y_mask (bs, 1, 1, max_len) x_mask (bs, 1, 1, grid_num)
-        for i, dec in enumerate(self.dec_list):
-            fuse_fea = dec(uni_fea, fuse_fea, uni_mask, uni_senti)   # (4, 360, 768)
-        return y, x
-
-    def _get_clones(self, module, N):
-        return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
-
-
-class SentiCLS(nn.Module):
-    def __init__(self, opt):
-        super(SentiCLS, self).__init__()
-        self.fuse_layer = nn.Sequential(
-            nn.Linear((768 + 128 * 2) * 2, (768 + 128 * 2) * 2, bias=True),
-            nn.ReLU(),
-            nn.Linear((768 + 128 * 2) * 2, (768 + 128 * 2) * 2, bias=True),
-            nn.Sigmoid()
-        )
-        self.cls_layer = nn.Sequential(
-            nn.Linear((768 + 128 * 2) * 2, 512, bias=True),
-            nn.ReLU(),
-            nn.Linear(512, 128, bias=True),
-            nn.ReLU(),
-            nn.Linear(128, 1, bias=True)
-        )
-
-        self.layernorm = nn.LayerNorm((768 + 128 * 2) * 2)
-
-    def forward(self, hidden_text, hidden_video, hidden_acoustic):
-        h_t_global = hidden_text[:, 0, :]   # torch.mean(hidden_text, dim=1)
-        h_v_global = torch.mean(hidden_video, dim=1)
-        h_a_global = torch.mean(hidden_acoustic, dim=1)
-
-        fusion_features = torch.cat((h_t_global, h_v_global, h_a_global), dim=-1)
-        fusion_features = self.layernorm(fusion_features + self.fuse_layer(fusion_features))
-        output = self.cls_layer(fusion_features)
-
-        return output
+'''
