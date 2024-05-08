@@ -22,7 +22,7 @@ class KMSA(nn.Module):
         uni_mask = inputs_data_mask['mask']
 
         # Dynamic Multimodal Fusion using Dynamic Route Transformer with Unimodal Sentiment Prediction
-        multimodal_features = self.DyMultiFus(uni_fea, uni_senti, uni_mask)
+        multimodal_features = self.DyMultiFus(uni_fea, uni_mask, uni_senti)
 
         # Sentiment Classification
         prediction = self.CLS(multimodal_features)     # uni_fea['T'], uni_fea['V'], uni_fea['A']
