@@ -64,7 +64,7 @@ def save_model(save_path, result, modality, model):
         os.makedirs(save_path)
     save_file_path = os.path.join(
         save_path,
-        '{}_MAE-{}_Corr-{}.pth'.format(
+        'MOS_{}_MAE-{}_Corr-{}.pth'.format(
             modality,
             result["MAE"],
             result["Corr"]

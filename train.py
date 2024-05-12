@@ -27,9 +27,9 @@ def main(parse_args):
     setup_seed(opt.seed)
     model = build_model(opt).to(device)
     model.preprocess_model(pretrain_path={
-        'T': "/opt/data/private/K-MSA/pretrainedModel/SIMS_T_MAE-0.287_Corr-0.747.pth",
-        'V': "/opt/data/private/K-MSA/pretrainedModel/SIMS_V_MAE-0.509_Corr-0.548.pth",
-        'A': "/opt/data/private/K-MSA/pretrainedModel/SIMS_A_MAE-0.562_Corr-0.182.pth"
+        'T': "/opt/data/private/K-MSA/pretrainedModel/SIMS_T_MAE-0.278_Corr-0.765.pth",
+        'V': "/opt/data/private/K-MSA/pretrainedModel/SIMS_V_MAE-0.522_Corr-0.520.pth",
+        'A': "/opt/data/private/K-MSA/pretrainedModel/SIMS_A_MAE-0.516_Corr-0.261.pth"
     })      # 加载预训练权重并冻结参数
     dataLoader = MMDataLoader(opt)
     optimizer = torch.optim.AdamW(
@@ -62,16 +62,17 @@ def train(model, train_loader, optimizer, loss_fn, epoch, metrics):
             'A': data['audio'].to(device),
             'T': data['text'].to(device),
             'mask': {
-                'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
-                'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device),
+                'V': data['vision_padding_mask'][:, 1:data['vision'].shape[1]+1].to(device),
+                'A': data['audio_padding_mask'][:, 1:data['audio'].shape[1]+1].to(device),
                 'T': []
             }
         }
         label = data['labels']['M'].to(device)
         label = label.view(-1, 1)
+        copy_label = label.clone().detach()
         batchsize = inputs['V'].shape[0]
 
-        output = model(inputs)
+        output = model(inputs, copy_label)
 
         loss = loss_fn(output, label)
         losses.update(loss.item(), batchsize)
@@ -109,8 +110,8 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, metrics):
                 'A': data['audio'].to(device),
                 'T': data['text'].to(device),
                 'mask': {
-                    'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
-                    'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device),
+                    'V': data['vision_padding_mask'][:, 1:data['vision'].shape[1]+1].to(device),
+                    'A': data['audio_padding_mask'][:, 1:data['audio'].shape[1]+1].to(device),
                     'T': []
                 }
             }
@@ -118,7 +119,7 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, metrics):
             label = label.view(-1, 1)
             batchsize = inputs['V'].shape[0]
 
-            output = model(inputs)
+            output = model(inputs, None)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
@@ -151,8 +152,8 @@ def test(model, test_loader, optimizer, loss_fn, epoch, metrics):
                 'A': data['audio'].to(device),
                 'T': data['text'].to(device),
                 'mask': {
-                    'V': data['vision_padding_mask'][:, 0:data['vision'].shape[1]+1].to(device),
-                    'A': data['audio_padding_mask'][:, 0:data['audio'].shape[1]+1].to(device),
+                    'V': data['vision_padding_mask'][:, 1:data['vision'].shape[1]+1].to(device),
+                    'A': data['audio_padding_mask'][:, 1:data['audio'].shape[1]+1].to(device),
                     'T': []
                 }
             }
@@ -160,7 +161,7 @@ def test(model, test_loader, optimizer, loss_fn, epoch, metrics):
             label = label.view(-1, 1)
             batchsize = inputs['V'].shape[0]
 
-            output = model(inputs)
+            output = model(inputs, None)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
@@ -184,29 +185,20 @@ if __name__ == '__main__':
     main(opt)
 
 '''
-test: {'Has0_acc_2': 0.8382, 'Has0_F1_score': 0.8402, 'Non0_acc_2': 0.8613, 'Non0_F1_score': 0.8624, 'Mult_acc_5': 0.5262, 'Mult_acc_7': 0.4606, 'MAE': 0.7066, 'Corr': 0.7899}
-| Test    | 0.4078 | 0.608  |  0.7746 |  0.6718 |  0.4136 | 0.7697 |
-| Test    | 0.407  | 0.5878 |  0.7702 |  0.6499 |  0.4354 | 0.7683 |
-| Test    | 0.4132 | 0.5782 |  0.7746 |  0.663  |  0.453  | 0.7723 |
-| Test    | 0.4085 | 0.594  |  0.7746 |  0.6499 |  0.4464 | 0.7727 |
-| Test    | 0.4272 | 0.5941 |  0.8053 |  0.6368 |  0.4026 | 0.8134 |       提高参数量
 | Test    | 0.4084 | 0.5985 |  0.779  |  0.6324 |  0.4245 | 0.7764 |
 
-
 | Test    | 0.407  | 0.5878 |  0.7702 |  0.6499 |  0.4354 | 0.7683 |       dropout
-| Test    | 0.4132 | 0.5782 |  0.7746 |  0.663  |  0.453  | 0.7723 |
 
-提高参数,提高dropout
-
-| Test    | 0.4144 | 0.5833 |  0.7681 |  0.6608 |  0.442  | 0.7651 |
-| Test    | 0.4121 | 0.5932 |  0.7768 |  0.6521 |  0.4333 | 0.7727 |
-
-| Test    | 0.4125 | 0.5916 |  0.7965 |  0.6761 |  0.4158 | 0.7976 |
 | Test    | 0.4131 | 0.588  |  0.7856 |  0.663  |  0.4376 | 0.7839 |        # 层数还是3层，其他都没变；只改了dropout，以及添加了attention融合
 
-| Test    | 0.4186 | 0.571  |  0.7702 |  0.6368 |  0.4223 | 0.77   |    rout
-
-
 | Test    | 0.4086 | 0.612  |  0.7702 |  0.6411 |  0.4289 | 0.7683 |
-| Test    | 0.4082 | 0.5976 |  0.7921 |  0.6586 |  0.4442 | 0.7937 |
+| Test    | 0.4082 | 0.5976 |  0.7921 |  0.6586 |  0.4442 | 0.7937 |        # rout 除了unisenti以外的东西
+
+| Test    | 0.4047 | 0.6025 |  0.7965 |  0.6761 |  0.4486 | 0.7948 |    seed 1111 unisent SOTA
+
+| Test    | 0.4026 | 0.6089 |  0.7812 |  0.6805 |  0.4442 | 0.7781 |
+| Test    | 0.4116 | 0.6038 |  0.8118 |  0.663  |  0.4289 | 0.8126 |    终究还是线性层
+| Test    | 0.4166 | 0.5943 |  0.8053 |  0.663  |  0.4442 | 0.8058 |
+| Test    | 0.4087 | 0.6042 |  0.7856 |  0.6674 |  0.4551 | 0.7825 |
+| Test    | 0.4088 | 0.6058 |  0.779  |  0.6696 |  0.477  | 0.7751 |
 '''
