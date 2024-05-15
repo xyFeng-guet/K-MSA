@@ -16,22 +16,22 @@ def parse_opts():
     parser.add_argument('--train_mode', type=str, default='regression',
                         help='type of pre-training labels')
 
-    parser.add_argument('--dataPath', type=str, default='/opt/data/private/Project/Datasets/MSA_Datasets/SIMS/Processed/unaligned_39.pkl',
+    parser.add_argument('--dataPath', type=str, default='/opt/data/private/Project/Datasets/MSA_Datasets/SIMSv2/SIMSv2s/Processed/unaligned.pkl',
                         help='path for checkpointing')
     parser.add_argument('--savePath', type=str, default='./pretrainedModel/',
                         help='path for checkpointing')
 
     parser.add_argument('--seed', type=int, default=1111,
                         help='random seed')
-    parser.add_argument('--batch_size', type=int, default=128,
+    parser.add_argument('--batch_size', type=int, default=32,
                         help='')
-    parser.add_argument('--n_epochs', type=list, default=[30, 200, 200],
+    parser.add_argument('--n_epochs', type=list, default=[100, 100, 50],
                         help='epoch number for training')
     parser.add_argument('--num_workers', type=int, default=8,
                         help='')
-    parser.add_argument('--seq_lens', type=list, default=[39, 55, 400],
+    parser.add_argument('--seq_lens', type=list, default=[50, 232, 925],
                         help='features length of each modality for pre-training')
-    parser.add_argument('--fea_dims', type=list, default=[768, 709, 33],
+    parser.add_argument('--fea_dims', type=list, default=[768, 177, 25],
                         help='features length of each modality for pre-training')
     parser.add_argument('--lr', type=int, default=1e-4,
                         help='learning rate')
@@ -54,8 +54,8 @@ def train(modality, model, device, train_loader, optimizer, loss_fn, epoch, metr
             'A': data['audio'].to(device),
             'T': data['text'].to(device),
             'mask': {
-                'V': data['vision_padding_mask'].to(device),
-                'A': data['audio_padding_mask'].to(device),
+                'V': data['vision_padding_mask'][:, 1:].to(device),
+                'A': data['audio_padding_mask'][:, 1:].to(device),
                 'T': []
             }
         }
@@ -64,14 +64,14 @@ def train(modality, model, device, train_loader, optimizer, loss_fn, epoch, metr
         batchsize = inputs['V'].shape[0]
 
         output = model(inputs)
-        loss = loss_fn(output, label)
+        loss = loss_fn(output[1], label)
         losses.update(loss.item(), batchsize)
         loss.backward()
 
         optimizer.step()
         optimizer.zero_grad()
 
-        y_pred.append(output.cpu())
+        y_pred.append(output[1].cpu())
         y_true.append(label.cpu())
 
         train_pbar.set_description('train')
@@ -100,8 +100,8 @@ def evaluate(modality, model, device, eval_loader, optimizer, loss_fn, epoch, me
                 'A': data['audio'].to(device),
                 'T': data['text'].to(device),
                 'mask': {
-                    'V': data['vision_padding_mask'].to(device),
-                    'A': data['audio_padding_mask'].to(device),
+                    'V': data['vision_padding_mask'][:, 1:].to(device),
+                    'A': data['audio_padding_mask'][:, 1:].to(device),
                     'T': []
                 }
             }
@@ -110,10 +110,10 @@ def evaluate(modality, model, device, eval_loader, optimizer, loss_fn, epoch, me
             batchsize = inputs['V'].shape[0]
 
             output = model(inputs)
-            y_pred.append(output.cpu())
+            y_pred.append(output[1].cpu())
             y_true.append(label.cpu())
 
-            loss = loss_fn(output, label)
+            loss = loss_fn(output[1], label)
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('eval')
@@ -142,8 +142,8 @@ def test(modality, model, device, test_loader, optimizer, loss_fn, epoch, metric
                 'A': data['audio'].to(device),
                 'T': data['text'].to(device),
                 'mask': {
-                    'V': data['vision_padding_mask'].to(device),
-                    'A': data['audio_padding_mask'].to(device),
+                    'V': data['vision_padding_mask'][:, 1:].to(device),
+                    'A': data['audio_padding_mask'][:, 1:].to(device),
                     'T': []
                 }
             }
@@ -152,10 +152,10 @@ def test(modality, model, device, test_loader, optimizer, loss_fn, epoch, metric
             batchsize = inputs['V'].shape[0]
 
             output = model(inputs)
-            y_pred.append(output.cpu())
+            y_pred.append(output[1].cpu())
             y_true.append(label.cpu())
 
-            loss = loss_fn(output, label)
+            loss = loss_fn(output[1], label)
             losses.update(loss.item(), batchsize)
 
             test_pbar.set_description('test')
@@ -189,6 +189,8 @@ def main(i, modality):
     scheduler_warmup = get_scheduler(optimizer, opt.n_epochs[i])
 
     for epoch in range(1, opt.n_epochs[i]+1):
+        if epoch == 34:
+            break
         train_results = train(modality, model, device, dataLoader['train'], optimizer, loss_fn, epoch, metrics)
         valid_results = evaluate(modality, model, device, dataLoader['valid'], optimizer, loss_fn, epoch, metrics)
         test_results = test(modality, model, device, dataLoader['test'], optimizer, loss_fn, epoch, metrics)
@@ -201,5 +203,5 @@ def main(i, modality):
 
 
 if __name__ == '__main__':
-    for i, m in enumerate(["V", "A"]):
-        main(i+1, modality=m)
+    for i, m in enumerate(["A"]):
+        main(i+2, modality=m)

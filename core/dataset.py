@@ -15,6 +15,7 @@ class MMDataset(Dataset):
             'mosi': self.__init_mosi,
             'mosei': self.__init_mosei,
             'sims': self.__init_sims,
+            'simsv2': self.__init_simsv2,
             'external_knowledge': self.__init_external_knowledge
         }
         DATA_MAP[args.datasetName]()
@@ -40,14 +41,17 @@ class MMDataset(Dataset):
         self.labels = {
             'M': data[self.mode][self.args.train_mode+'_labels'].astype(np.float32)
         }
-        if self.args.datasetName == 'sims':
+        if 'sims' in self.args.datasetName:
             for m in "TAV":
                 self.labels[m] = data[self.mode][self.args.train_mode+'_labels_'+m]
 
         if not self.args.need_data_aligned:
             self.audio_lengths = data[self.mode]['audio_lengths']
             self.vision_lengths = data[self.mode]['vision_lengths']
+
+        # Clear dirty data
         self.audio[self.audio == -np.inf] = 0
+        self.vision[self.vision == -np.inf] = 0
 
         self.__gen_mask(data[self.mode])
         if self.args.need_truncated:
@@ -57,6 +61,9 @@ class MMDataset(Dataset):
         return self.__init_mosi()
 
     def __init_sims(self):
+        return self.__init_mosi()
+
+    def __init_simsv2(self):
         return self.__init_mosi()
 
     def __init_external_knowledge(self):
@@ -88,7 +95,10 @@ class MMDataset(Dataset):
 
         self.audio_lengths = data[self.mode]['audio_lengths']
         self.vision_lengths = data[self.mode]['vision_lengths']
+
+        # Clear dirty data
         self.audio[self.audio == -np.inf] = 0
+        self.vision[self.vision == -np.inf] = 0
 
         self.__gen_mask(data[self.mode])
         self.__truncated()
@@ -118,16 +128,20 @@ class MMDataset(Dataset):
         self.audio = Truncated(self.audio, audio_length)
 
     def __gen_mask(self, data):
-        vision_tmp = torch.sum(torch.tensor(data['vision']), dim=-1)
-        vision_mask = (vision_tmp == 0)
-        vision_mask = torch.cat((vision_mask[:, 0:1], vision_mask), dim=-1)
+        vision_tmp = torch.tensor([[True for i in range(data['vision'].shape[1])] for j in range(data['vision'].shape[0])])
+        for i in range(len(vision_tmp)):
+            vision_tmp[i][0:data['vision_lengths'][i]] = False
+
+        vision_mask = torch.cat((vision_tmp[:, 0:1], vision_tmp), dim=-1)
         for i in range(self.__len__()):
             vision_mask[i][0] = False
         self.vision_padding_mask = vision_mask
 
-        audio_tmp = torch.sum(torch.tensor(data['audio']), dim=-1)
-        audio_mask = (audio_tmp == 0)
-        audio_mask = torch.cat((audio_mask[:, 0:1], audio_mask), dim=-1)
+        audio_tmp = torch.tensor([[True for i in range(data['audio'].shape[1])] for j in range(data['audio'].shape[0])])
+        for i in range(len(audio_tmp)):
+            audio_tmp[i][0:data['audio_lengths'][i]] = False
+
+        audio_mask = torch.cat((audio_tmp[:, 0:1], audio_tmp), dim=-1)
         for i in range(self.__len__()):
             audio_mask[i][0] = False
         self.audio_padding_mask = audio_mask
@@ -143,7 +157,8 @@ class MMDataset(Dataset):
             'vision': torch.Tensor(self.vision[index]),
             'index': index,
             'id': self.ids[index],
-            'labels': {k: torch.Tensor(v[index].reshape(-1)) for k, v in self.labels.items()}
+            'labels': {k: torch.Tensor(v[index].reshape(-1)) for k, v in self.labels.items()},
+            'mask': self.mask[index] if self.mode == 'train_mix' else []
         }
         sample['audio_lengths'] = self.audio_lengths[index]
         sample['vision_lengths'] = self.vision_lengths[index]

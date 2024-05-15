@@ -10,6 +10,7 @@ class MetricsTop():
             'MOSI': self.__eval_mosi_regression,
             'MOSEI': self.__eval_mosei_regression,
             'SIMS': self.__eval_sims_regression,
+            'SIMSV2': self.__eval_sims_regression,
             'EXTERNAL_KNOWLEDGE': self.__eval_external_knowledge_regression
         }
 

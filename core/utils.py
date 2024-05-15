@@ -3,6 +3,7 @@ import logging
 import random
 import numpy as np
 import torch
+import torch.nn.functional as F
 from tabulate import tabulate
 
 
@@ -64,7 +65,7 @@ def save_model(save_path, result, modality, model):
         os.makedirs(save_path)
     save_file_path = os.path.join(
         save_path,
-        'MOS_{}_MAE-{}_Corr-{}.pth'.format(
+        'SIMSv2_{}_MAE-{}_Corr-{}.pth'.format(
             modality,
             result["MAE"],
             result["Corr"]
@@ -100,13 +101,19 @@ def save_print_results(opt, logger, train_re, valid_re, test_re):
 
 
 def calculate_ratio_senti(uni_senti, multi_senti, k=2.):
-    ratio = {}
+    ratio, difference = {}, {}
     for m in ['T', 'V', 'A']:
         uni_senti[m] = torch.exp(-1 * k * torch.pow(torch.abs(uni_senti[m] - multi_senti), 2))
+        difference[m] = torch.abs(uni_senti[m] - multi_senti)
 
     # 进行归一化
     for m in ['T', 'V', 'A']:
         ratio[m] = uni_senti[m] / (uni_senti['T'] + uni_senti['V'] + uni_senti['A'])
         ratio[m] = ratio[m].unsqueeze(-1)
 
-    return ratio
+    return ratio, difference
+
+
+def calculate_kl_loss(pk, qk, base=None):
+    kl_d = F.kl_div(input=qk.softmax(-1).log(), target=pk.softmax(-1), reduction='batchmean')
+    return kl_d
