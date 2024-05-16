@@ -5,6 +5,31 @@ from torch import nn, einsum
 from einops import rearrange
 
 
+class CPC(nn.Module):
+    def __init__(self, x_size, y_size, n_layers=1, activation='Tanh'):
+        super().__init__()
+        self.x_size = x_size
+        self.y_size = y_size
+        self.layers = n_layers
+        self.activation = getattr(nn, activation)
+
+    def forward(self, x, y):
+        x = torch.mean(x, dim=-2)
+        y = torch.mean(y, dim=-2)
+
+        # x_pred = self.net(y)    # bs, emb_size
+        x_pred = y
+
+        # normalize to unit sphere
+        x_pred = x_pred / x_pred.norm(dim=1, keepdim=True)
+        x = x / x.norm(dim=1, keepdim=True)
+
+        pos = torch.sum(x*x_pred, dim=-1)   # bs
+        neg = torch.logsumexp(torch.matmul(x, x_pred.t()), dim=-1)   # bs
+        nce = -(pos - neg).mean()
+        return nce
+
+
 class FeedForward(nn.Module):
     def __init__(self, dim, hidden_dim, dropout=0.):
         super(FeedForward, self).__init__()
@@ -80,20 +105,27 @@ class DyRout_block(nn.Module):
         self.f_v = CrossTransformer(dim=opt.hidden_size, mlp_dim=opt.ffn_size, dropout=dropout)
         self.f_a = CrossTransformer(dim=opt.hidden_size, mlp_dim=opt.ffn_size, dropout=dropout)
 
+        self.layernorm_t = nn.LayerNorm(256)
+        self.layernorm_v = nn.LayerNorm(256)
+        self.layernorm_a = nn.LayerNorm(256)
         self.layernorm = nn.LayerNorm(256)
 
     def forward(self, source, t, v, a, senti):
         cross_f_t = self.f_t(target_x=source, source_x=t)
         cross_f_v = self.f_v(target_x=source, source_x=v)
         cross_f_a = self.f_a(target_x=source, source_x=a)
-        output = self.layernorm(cross_f_t + cross_f_v + cross_f_a)
+
+        if senti is not None:
+            output = self.layernorm(self.layernorm_t(cross_f_t + senti['T'] * cross_f_t) + self.layernorm_v(cross_f_v + senti['V'] * cross_f_v) + self.layernorm_a(cross_f_a + senti['A'] * cross_f_a))
+        else:
+            output = self.layernorm(cross_f_t + cross_f_v + cross_f_a)
         return output
 
 
 class DyRoutTrans_block(nn.Module):
     def __init__(self, opt):
         super(DyRoutTrans_block, self).__init__()
-        self.mhatt1 = DyRout_block(opt, dropout=0.4)
+        self.mhatt1 = DyRout_block(opt, dropout=0.3)
         self.mhatt2 = MultiHAtten(opt.hidden_size, dropout=0.)
         self.ffn = FeedForward(opt.hidden_size, opt.ffn_size, dropout=0.)
 
@@ -114,9 +146,9 @@ class DyRoutTrans(nn.Module):
         self.opt = opt
 
         # Length Align
-        self.len_t = nn.Linear(opt.seq_lens[0], 39)
-        self.len_v = nn.Linear(opt.seq_lens[1]+1, 39)
-        self.len_a = nn.Linear(opt.seq_lens[2]+1, 39)
+        self.len_t = nn.Linear(opt.seq_lens[0], opt.seq_lens[0])
+        self.len_v = nn.Linear(opt.seq_lens[1], opt.seq_lens[0])
+        self.len_a = nn.Linear(opt.seq_lens[2], opt.seq_lens[0])
 
         # Dimension Align
         self.dim_t = nn.Linear(768*2, 256)
@@ -124,19 +156,27 @@ class DyRoutTrans(nn.Module):
         self.dim_a = nn.Linear(256, 256)
 
         fusion_block = DyRoutTrans_block(opt)
-        self.dec_list = self._get_clones(fusion_block, 4)
+        self.dec_list = self._get_clones(fusion_block, 3)
 
-        self.layernorm = nn.LayerNorm(256)
+        self.cpc_ft = CPC(x_size=256, y_size=256)
+        self.cpc_fv = CPC(x_size=256, y_size=256)
+        self.cpc_fa = CPC(x_size=256, y_size=256)
 
-    def forward(self, uni_fea, uni_mask, uni_senti):
+    def forward(self, uni_fea, uni_mask, senti_ratio):
         hidden_t = self.len_t(self.dim_t(uni_fea['T']).permute(0, 2, 1)).permute(0, 2, 1)
         hidden_v = self.len_v(self.dim_v(uni_fea['V']).permute(0, 2, 1)).permute(0, 2, 1)
         hidden_a = self.len_a(self.dim_a(uni_fea['A']).permute(0, 2, 1)).permute(0, 2, 1)
 
         source = hidden_t + hidden_v + hidden_a
         for i, dec in enumerate(self.dec_list):
-            source = dec(source, hidden_t, hidden_v, hidden_a, uni_mask, uni_senti)
-        return source
+            source = dec(source, hidden_t, hidden_v, hidden_a, uni_mask, senti_ratio)
+
+        nce_t = self.cpc_ft(hidden_t, source)
+        nce_v = self.cpc_fv(hidden_v, source)
+        nce_a = self.cpc_fa(hidden_a, source)
+        nce_loss = nce_t + nce_v + nce_a
+
+        return source, nce_loss
 
     def _get_clones(self, module, N):
         return nn.ModuleList([copy.deepcopy(module) for i in range(N)])
@@ -145,25 +185,15 @@ class DyRoutTrans(nn.Module):
 class SentiCLS(nn.Module):
     def __init__(self, opt):
         super(SentiCLS, self).__init__()
-        # self.fuse_layer = nn.Sequential(
-        #     nn.Linear(256, 256, bias=True),
-        #     nn.ReLU(),
-        #     nn.Linear(256, 256, bias=True),
-        #     nn.Sigmoid()
-        # )
         self.cls_layer = nn.Sequential(
-            nn.Linear(256, 128, bias=True),
+            nn.Linear(256, 64, bias=True),
             nn.GELU(),
-            nn.Linear(128, 64, bias=True),
+            nn.Linear(64, 32, bias=True),
             nn.GELU(),
-            nn.Linear(64, 1, bias=True)
+            nn.Linear(32, 1, bias=True)
         )
 
-        self.layernorm = nn.LayerNorm(256)
-
-    def forward(self, fusion_features):    # hidden_text, hidden_video, hidden_acoustic
+    def forward(self, fusion_features):
         fusion_features = torch.mean(fusion_features, dim=-2)
-        # fusion_features = self.layernorm(fusion_features + self.fuse_layer(fusion_features))
-
         output = self.cls_layer(fusion_features)
         return output

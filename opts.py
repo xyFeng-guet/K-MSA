@@ -8,7 +8,7 @@ def parse_opts():
             dict(name='--datasetName',
                  type=str,
                  default='sims',
-                 help='mosi, mosei or sims'),
+                 help='mosi, mosei, sims or simsv2'),
             dict(name='--dataPath',
                  default="/opt/data/private/Project/Datasets/MSA_Datasets/SIMS/Processed/unaligned_39.pkl",
                  type=str,

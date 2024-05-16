@@ -63,16 +63,16 @@ class PositionEncoding(nn.Module):
     """
     def __init__(self, num_patches, fea_size, tf_hidden_dim, drop_out):
         super(PositionEncoding, self).__init__()
-        self.cls_token = nn.Parameter(torch.ones(1, 1, tf_hidden_dim))
+        # self.cls_token = nn.parameter.Parameter(torch.ones(1, 1, tf_hidden_dim))
         self.proj = nn.Linear(fea_size, tf_hidden_dim)
-        self.position_embeddings = nn.Parameter(torch.zeros(1, num_patches + 1, tf_hidden_dim))
+        self.position_embeddings = nn.parameter.Parameter(torch.zeros(1, num_patches, tf_hidden_dim))
         self.dropout = nn.Dropout(drop_out)
 
     def forward(self, embeddings):
-        batch_size = embeddings.shape[0]
+        # batch_size = embeddings.shape[0]
         embeddings = self.proj(embeddings)
-        cls_tokens = self.cls_token.expand(batch_size, -1, -1)
-        embeddings = torch.cat((cls_tokens, embeddings), dim=1)
+        # cls_tokens = self.cls_token.expand(batch_size, -1, -1)
+        # embeddings = torch.cat((cls_tokens, embeddings), dim=1)
         embeddings = embeddings + self.position_embeddings
         embeddings = self.dropout(embeddings)
         return embeddings
@@ -160,6 +160,16 @@ class UniEncoder(nn.Module):
             return output
         else:
             input_ids, input_mask, segment_ids = inputs[:, 0, :].long(), inputs[:, 1, :].float(), inputs[:, 2, :].long()    # 更换原始文本，使用tokenizer
+            # details = []
+            # for sample in inputs:
+            #     encoded_sent = self.tokenizer.encode_plus(
+            #         sample, max_length=50, add_special_tokens=True, truncation=True, padding='max_length')
+            #     details.append(encoded_sent)
+
+            # input_ids = torch.LongTensor([sample["input_ids"] for sample in details]).cuda()
+            # segment_ids = torch.LongTensor([sample["token_type_ids"] for sample in details]).cuda()
+            # input_mask = torch.LongTensor([sample["attention_mask"] for sample in details]).cuda()
+
             hidden_states = self.model(
                 input_ids=input_ids,
                 attention_mask=input_mask,
@@ -237,14 +247,10 @@ class UniPretrain(nn.Module):
 class UnimodalEncoder(nn.Module):
     def __init__(self, opt, bert_pretrained='./BERT/bert-base-uncased'):
         super(UnimodalEncoder, self).__init__()
-        # Length Align (Learning Context Information)
-        # self.len_align_v = nn.Linear(300, 50, bias=True)
-        # self.len_align_a = nn.Linear(300, 50, bias=True)
-
         # All Encoders of Each Modality
-        self.enc_t = UniPretrain(modality="T", pretrained=bert_pretrained, num_patches=39, proj_fea_dim=768)
-        self.enc_v = UniPretrain(modality="V", num_patches=55, fea_size=709)
-        self.enc_a = UniPretrain(modality="A", num_patches=400, fea_size=33)
+        self.enc_t = UniPretrain(modality="T", pretrained=bert_pretrained, num_patches=opt.seq_lens[0], proj_fea_dim=768)
+        self.enc_v = UniPretrain(modality="V", num_patches=opt.seq_lens[1], fea_size=709)
+        self.enc_a = UniPretrain(modality="A", num_patches=opt.seq_lens[2], fea_size=33)
 
     def forward(self, inputs_data_mask):
         # Encoder Part

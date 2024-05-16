@@ -72,9 +72,10 @@ def train(model, train_loader, optimizer, loss_fn, epoch, metrics):
         copy_label = label.clone().detach()
         batchsize = inputs['V'].shape[0]
 
-        output = model(inputs, copy_label)
+        output, nce_loss = model(inputs, copy_label)
 
-        loss = loss_fn(output, label)
+        loss_re = loss_fn(output, label)
+        loss = loss_re + 0.1 * nce_loss
         losses.update(loss.item(), batchsize)
         loss.backward()
 
@@ -119,7 +120,7 @@ def evaluate(model, eval_loader, optimizer, loss_fn, epoch, metrics):
             label = label.view(-1, 1)
             batchsize = inputs['V'].shape[0]
 
-            output = model(inputs, None)
+            output, _ = model(inputs, None)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
@@ -161,7 +162,7 @@ def test(model, test_loader, optimizer, loss_fn, epoch, metrics):
             label = label.view(-1, 1)
             batchsize = inputs['V'].shape[0]
 
-            output = model(inputs, None)
+            output, _ = model(inputs, None)
             y_pred.append(output.cpu())
             y_true.append(label.cpu())
 
@@ -196,9 +197,12 @@ if __name__ == '__main__':
 
 | Test    | 0.4047 | 0.6025 |  0.7965 |  0.6761 |  0.4486 | 0.7948 |    seed 1111 unisent SOTA
 
-| Test    | 0.4026 | 0.6089 |  0.7812 |  0.6805 |  0.4442 | 0.7781 |
-| Test    | 0.4116 | 0.6038 |  0.8118 |  0.663  |  0.4289 | 0.8126 |    终究还是线性层
-| Test    | 0.4166 | 0.5943 |  0.8053 |  0.663  |  0.4442 | 0.8058 |
-| Test    | 0.4087 | 0.6042 |  0.7856 |  0.6674 |  0.4551 | 0.7825 |
-| Test    | 0.4088 | 0.6058 |  0.779  |  0.6696 |  0.477  | 0.7751 |
+| Test    | 0.4007 | 0.6038 |  0.7921 |  0.6761 |  0.4617 | 0.7907 |    添加CPC
+| Test    | 0.4075 | 0.6123 |  0.8053 |  0.6696 |  0.4464 | 0.804  |
+| Test    | 0.4082 | 0.6132 |  0.8074 |  0.6652 |  0.4354 | 0.8071 |
+
+SIMSv2
+| Test    | 0.2717 | 0.7631 |  0.8269 |  0.7524 |  0.588  | 0.8263 |
+
+| Test    | 0.2704 | 0.7624 |  0.8221 |  0.7544 |  0.5996 | 0.8213 |
 '''
